@@ -1,0 +1,17 @@
+# Secrets / local env
+.env
+.env.local
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Codio guide assets (large binary images, not source)
+.guides/img/
+
+# Editor / OS noise
+.DS_Store
+*.swp
