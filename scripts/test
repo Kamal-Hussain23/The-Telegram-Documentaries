@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# scripts/test — the ground truth for this repo (TECH.md).
+# Runs lint, format check, type check, and the test suite.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "==> ruff check"
+ruff check .
+
+echo "==> ruff format --check"
+ruff format --check .
+
+echo "==> mypy"
+mypy
+
+echo "==> pytest"
+pytest
+
+echo "OK: all checks passed"
