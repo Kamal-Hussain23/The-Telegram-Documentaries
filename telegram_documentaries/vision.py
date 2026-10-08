@@ -55,14 +55,20 @@ class GeminiVisionClient:
             app_name=BOUNCER_APP_NAME, user_id=BOUNCER_USER_ID
         )
         try:
+            # Drain the runner to completion rather than returning from inside
+            # the loop: an early return cancels the ADK run mid-flight and logs
+            # cancellation/context-detach tracebacks.
+            final_text: str | None = None
             async for event in self._runner.run_async(
                 user_id=BOUNCER_USER_ID,
                 session_id=session.id,
                 new_message=message,
             ):
                 if event.is_final_response() and event.content and event.content.parts:
-                    return event.content.parts[0].text or ""
-            raise RuntimeError("Bouncer agent produced no final response")
+                    final_text = event.content.parts[0].text or ""
+            if final_text is None:
+                raise RuntimeError("Bouncer agent produced no final response")
+            return final_text
         finally:
             await self._runner.session_service.delete_session(
                 app_name=BOUNCER_APP_NAME,
