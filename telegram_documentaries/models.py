@@ -3,6 +3,18 @@
 from pydantic import BaseModel, ConfigDict
 
 
+class PhotoSize(BaseModel):
+    """One Telegram photo size variant. `file_id` is how we download it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    file_id: str
+    file_unique_id: str | None = None
+    width: int | None = None
+    height: int | None = None
+    file_size: int | None = None
+
+
 class Chat(BaseModel):
     """A Telegram conversation. `id` is the only identity this project uses."""
 
@@ -21,6 +33,8 @@ class Message(BaseModel):
     chat: Chat
     date: int | None = None
     text: str | None = None
+    #: Telegram sends several sizes for a photo, smallest first.
+    photo: list[PhotoSize] | None = None
 
 
 class Update(BaseModel):

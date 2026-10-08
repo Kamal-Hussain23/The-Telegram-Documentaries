@@ -27,6 +27,8 @@ Vision gate on incoming photos, with rejection and reset routing.
   session to the initial phase.
 - Photo-stage state is keyed by `chat_id`; no cross-user leakage.
 
+**Status:** implemented and verified — see `SPECS/2026-10-06-bouncer/`.
+
 **Serves:** photo intake.
 
 ## Phase 3 — Interviewer

@@ -52,7 +52,7 @@ Session state is held in memory, keyed by your Telegram `chat_id`. `/start` and
 3. Run the bot:
 
    ```bash
-   python -m <package>
+   python -m telegram_documentaries
    ```
 
    It polls Telegram outbound over HTTPS, so it works behind NAT and firewalls
@@ -86,5 +86,8 @@ Feature specs live alongside them as `SPECS/<YYYY-MM-DD>-<feature-name>/`.
 
 ## Status
 
-Early development. See [`SPECS/ROADMAP.md`](SPECS/ROADMAP.md) for what's built
-and what's next.
+Phases 1 (repository & gateway) and 2 (the Bouncer vision gate) are
+implemented. The bot long-polls Telegram, and an uploaded photo is downloaded,
+validated, and classified by `gemini-3.1-flash-lite` as human-present or not —
+non-human images get an in-character rejection and a session reset. See
+[`SPECS/ROADMAP.md`](SPECS/ROADMAP.md) for what's next.
