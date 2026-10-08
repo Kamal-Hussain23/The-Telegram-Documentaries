@@ -6,7 +6,6 @@ before anything downstream sees them.
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Protocol
 
 import requests
@@ -14,14 +13,47 @@ import requests
 from telegram_documentaries.logutil import log_call
 from telegram_documentaries.models import Update
 
-logger = logging.getLogger(__name__)
+#: Hard cap on a downloaded image. Telegram photos are well under this.
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+_ALLOWED_IMAGE_CONTENT_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
+_JPEG_MAGIC = b"\xff\xd8\xff"
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 class TelegramApiError(RuntimeError):
     """Telegram answered, but with `ok: false`."""
 
 
+class ImageValidationError(ValueError):
+    """Downloaded bytes are not a usable image (size, type, or shape)."""
+
+
+@log_call
+def validate_image(data: bytes, content_type: str | None) -> None:
+    """Reject untrusted downloaded bytes before anything downstream sees them.
+
+    Validates size, declared content type, and the leading magic bytes. Failures
+    are handled errors, logged loudly by ``log_call`` (TECH.md: no silent drops).
+    """
+
+    def reject(reason: str) -> ImageValidationError:
+        return ImageValidationError(f"{reason} (content_type={content_type!r}, size={len(data)})")
+
+    if not data:
+        raise reject("empty payload")
+    if len(data) > MAX_IMAGE_BYTES:
+        raise reject(f"payload exceeds MAX_IMAGE_BYTES ({MAX_IMAGE_BYTES})")
+    if content_type is None or content_type.lower() not in _ALLOWED_IMAGE_CONTENT_TYPES:
+        raise reject(f"unsupported content type {content_type!r}")
+    if not (data.startswith(_JPEG_MAGIC) or data.startswith(_PNG_MAGIC)):
+        raise reject("payload is not a recognised image")
+
+
 class ResponseProtocol(Protocol):
+    @property
+    def content(self) -> bytes: ...
+
     def json(self) -> Any: ...
 
     def raise_for_status(self) -> None: ...
@@ -51,6 +83,7 @@ class TelegramClient:
         self._token = token
         self._session: HttpSession = session if session is not None else requests.Session()
         self._base_url = base_url or f"https://api.telegram.org/bot{token}"
+        self._file_base_url = f"https://api.telegram.org/file/bot{token}"
 
     @log_call
     def get_updates(self, offset: int | None = None, timeout: int = 30) -> list[Update]:
@@ -76,6 +109,20 @@ class TelegramClient:
             timeout=30,
         )
         self._result(response)
+
+    @log_call
+    def get_file(self, file_id: str) -> bytes:
+        """Resolve `file_id` via `getFile`, then download the raw bytes."""
+        response = self._session.get(
+            f"{self._base_url}/getFile", params={"file_id": file_id}, timeout=30
+        )
+        result = self._result(response)
+        if not isinstance(result, dict) or not isinstance(result.get("file_path"), str):
+            raise TelegramApiError(f"unexpected getFile response: {result!r}")
+        file_path = result["file_path"]
+        file_response = self._session.get(f"{self._file_base_url}/{file_path}", timeout=60)
+        file_response.raise_for_status()
+        return file_response.content
 
     @staticmethod
     def _result(response: ResponseProtocol) -> Any:
