@@ -1,0 +1,6 @@
+# Development tooling used by scripts/test and scripts/hooks.
+-r requirements.txt
+mypy>=1.10
+pytest>=8
+ruff>=0.5
+types-requests>=2.31
