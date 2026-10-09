@@ -36,8 +36,10 @@ Vision gate on incoming photos, with rejection and reset routing.
 Sequential, stateful Q&A that accumulates the dossier and picks an animal.
 
 **Acceptance criteria**
-- 5–7 questions asked **one at a time**, each answer persisted to the session.
+- 3–4 questions asked **one at a time**, each answer persisted to the session.
 - On completion the dossier is summarised and a suggested animal is produced.
+- The completed profile + suggested animal are persisted for, and handed to,
+  the next pipeline stage.
 - The Interviewer drives the state machine as orchestrator.
 - Mid-interview `/start` or `/restart` clears the dossier and restarts cleanly.
 

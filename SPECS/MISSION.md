@@ -18,7 +18,7 @@ rare animal being observed in the wild.
 3. **The Bouncer** (Gemini 3.1 Flash Lite vision gate) confirms a human is
    present. Non-human images get a cheeky in-character rejection and a state
    reset.
-4. **The Interviewer** (Gemini 3.1 Flash Lite, the orchestrator) asks 5–7
+4. **The Interviewer** (Gemini 3.1 Flash Lite, the orchestrator) asks 3–4
    questions, one at a time, accumulating a behavioural dossier keyed to the
    user's `chat_id`, and outputs a suggested animal.
 5. **The Converter** (Gemini 3.1 Flash Image) fuses the original photo with the

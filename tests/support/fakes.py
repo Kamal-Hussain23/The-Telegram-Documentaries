@@ -1,12 +1,14 @@
-"""Deterministic offline test doubles for the Bouncer suite.
+"""Deterministic offline test doubles for the Bouncer and Interviewer suites.
 
 Nothing here touches the network or requires ``GEMINI_API_KEY``: the Gemini
-vision client is stubbed and the Telegram client is scripted, so the default
-suite stays green in CI. The real dependencies land in groups 2–5.
+vision and interview clients are stubbed and the Telegram client is scripted,
+so the default suite stays green in CI. The real dependencies land in groups
+2–5 of each phase.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from telegram_documentaries.models import Update
@@ -36,6 +38,56 @@ class StubVisionClient:
         if not self._responses:
             raise AssertionError("StubVisionClient ran out of scripted responses")
         return self._responses.pop(0)
+
+
+def question_json(question: str, *, is_final: bool = False) -> str:
+    """A raw ``NextQuestion`` payload exactly as the model would emit it."""
+    return json.dumps({"question": question, "is_final": is_final})
+
+
+def profile_json(profile: str, suggested_animal: str) -> str:
+    """A raw ``InterviewProfile`` payload exactly as the model would emit it."""
+    return json.dumps({"profile": profile, "suggested_animal": suggested_animal})
+
+
+class StubInterviewClient:
+    """Scripted Gemini interview client: queues raw structured outputs.
+
+    Structurally implements the real client's ``InterviewClient`` protocol —
+    ``generate_question`` and ``synthesize_profile`` return raw JSON for the
+    Interviewer to parse at the edge — but never touches the network. Every
+    call records the prompt context it was handed, and any scripted entry may
+    be an exception instance to simulate Gemini failing mid-interview.
+    """
+
+    def __init__(
+        self,
+        questions: list[str | BaseException] | None = None,
+        profiles: list[str | BaseException] | None = None,
+    ) -> None:
+        self._questions = list(questions or [])
+        self._profiles = list(profiles or [])
+        #: The prompt context of every question-generation call, in order.
+        self.question_calls: list[str] = []
+        #: The prompt context of every profile-synthesis call, in order.
+        self.profile_calls: list[str] = []
+
+    def generate_question(self, context: str) -> str:
+        self.question_calls.append(context)
+        return self._next(self._questions, "question")
+
+    def synthesize_profile(self, context: str) -> str:
+        self.profile_calls.append(context)
+        return self._next(self._profiles, "profile")
+
+    @staticmethod
+    def _next(script: list[str | BaseException], label: str) -> str:
+        if not script:
+            raise AssertionError(f"StubInterviewClient ran out of scripted {label}s")
+        item = script.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
 
 
 class FakeTelegramClient:
@@ -95,3 +147,19 @@ def photo_update(
             },
         }
     )
+
+
+def text_update(update_id: int, chat_id: int, text: str | None) -> Update:
+    """Build a valid inbound message update.
+
+    ``text=None`` models Telegram's non-text payloads (stickers, voice notes),
+    which carry no ``text`` key at all.
+    """
+    message: dict[str, object] = {
+        "message_id": update_id,
+        "date": 0,
+        "chat": {"id": chat_id, "type": "private"},
+    }
+    if text is not None:
+        message["text"] = text
+    return Update.model_validate({"update_id": update_id, "message": message})

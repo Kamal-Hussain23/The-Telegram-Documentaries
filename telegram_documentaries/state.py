@@ -13,10 +13,10 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 #: Bump when ``SessionState`` changes shape; older entries are then discarded.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class Phase(StrEnum):
@@ -24,7 +24,29 @@ class Phase(StrEnum):
 
     AWAITING_PHOTO = "AWAITING_PHOTO"
     INTERVIEWING = "INTERVIEWING"
+    CONVERTING = "CONVERTING"
     SCRIPTING = "SCRIPTING"
+
+
+class Dossier(BaseModel):
+    """One chat's accumulated interview (plan 2.2).
+
+    Progress is derived from these records — questions asked against answers
+    given — rather than from a stored counter. ``profile`` and
+    ``suggested_animal`` are the completed handoff the next stage reads.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    questions: list[str] = Field(default_factory=list)
+    answers: list[str] = Field(default_factory=list)
+    #: The synthesised behavioural/personality summary. Internal only: it is
+    #: never sent to the user (requirements decision 6).
+    profile: str | None = None
+    suggested_animal: str | None = None
+    #: The question awaiting an answer is the interview's last one — set when a
+    #: final question goes out (model-marked from question 3, forced at 4).
+    awaiting_final: bool = False
 
 
 class SessionState(BaseModel):
@@ -37,6 +59,7 @@ class SessionState(BaseModel):
     phase: Phase = Phase.AWAITING_PHOTO
     #: The raw bytes of the accepted photo, scoped to this chat only.
     photo: bytes | None = None
+    dossier: Dossier = Field(default_factory=Dossier)
 
 
 class StateDriver:

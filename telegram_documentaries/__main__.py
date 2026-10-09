@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 from telegram_documentaries.bot import Bot
 from telegram_documentaries.bouncer import Bouncer
 from telegram_documentaries.client import TelegramClient
+from telegram_documentaries.interview_client import GeminiInterviewClient
+from telegram_documentaries.interviewer import Interviewer
 from telegram_documentaries.logutil import configure_logging
 from telegram_documentaries.state import StateDriver
 from telegram_documentaries.vision import GeminiVisionClient
@@ -30,7 +32,7 @@ def main() -> int:
         return 1
 
     # GEMINI_API_KEY is read from .env only (requirements decision 2); the
-    # Bouncer is the first stage that needs it.
+    # Bouncer and the Interviewer are the stages that need it.
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         logger.error("GEMINI_API_KEY is missing. Copy .env.example to .env and fill it in.")
@@ -39,8 +41,15 @@ def main() -> int:
     logger.info("starting gateway as @%s", os.environ.get("BOT_USERNAME", "unknown"))
 
     bouncer = Bouncer(GeminiVisionClient(api_key=api_key))
+    state = StateDriver()
+    interviewer = Interviewer(state, GeminiInterviewClient(api_key=api_key))
     try:
-        Bot(TelegramClient(token=token), bouncer=bouncer, state=StateDriver()).run()
+        Bot(
+            TelegramClient(token=token),
+            bouncer=bouncer,
+            state=state,
+            interviewer=interviewer,
+        ).run()
     except KeyboardInterrupt:
         logger.info("bye")
     return 0
