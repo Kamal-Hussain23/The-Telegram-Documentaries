@@ -1,10 +1,8 @@
 # The Telegram Documentaries
 
 <p align="center">
-  <img src="orangutan-interviewer.png" alt="Interviewer Agent" width="200">
+  <img src="orangutan-interviewer.png" alt="Interviewer Agent" width="150">
 </p>
-
-# The Telegram Documentaries
 
 A Telegram bot that transforms a user's portrait photo into a narrated comedy wildlife documentary. The user sends a photo, answers a few questions, and receives:
 
@@ -27,16 +25,6 @@ The comedy emerges from sincerity: the bot treats every subject as a majestic, r
 | **The Narrator** | Gemini TTS (not an agent) | The script goes directly to text‑to‑speech and returns as a voice note — no extra conversational turn. |
 
 **Session state** is held in memory, keyed by the user's Telegram `chat_id`. `/start` and `/restart` purge the session and any temporary media files without restarting the bot.
-
----
-
-## Animation: Pipeline Flow
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Kamal-Hussain23/The-Telegram-Documentaries/main/docs/pipeline-flow.gif" alt="Telegram Documentaries Pipeline" width="500">
-</p>
-
-*Flow: User photo → Bouncer (human check) → Interviewer (3‑4 questions) → Converter (hybrid image) → Scripter (narration) → Narrator (voice note).*
 
 ---
 
