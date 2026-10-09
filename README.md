@@ -1,5 +1,11 @@
 # The Telegram Documentaries
 
+<p align="center">
+  <img src="orangutan-interviewer.png" alt="Interviewer Agent" width="200">
+</p>
+
+# The Telegram Documentaries
+
 A Telegram bot that transforms a user's portrait photo into a narrated comedy wildlife documentary. The user sends a photo, answers a few questions, and receives:
 
 1. **A hybrid animal portrait** — the original photo fused with AI-generated animal features via the Converter stage.
