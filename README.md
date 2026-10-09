@@ -13,7 +13,7 @@ over **long polling** — no webhooks, no public URL, no extra infrastructure.
 | Stage | Model | What it does |
 | --- | --- | --- |
 | **The Bouncer** | Gemini 3.1 Flash Lite (vision) | Confirms a human is in the photo; cheekily rejects anything else and resets the session. |
-| **The Interviewer** | Gemini 3.1 Flash Lite | The orchestrator. Asks 5–7 questions one at a time, builds a behavioural dossier, and suggests an animal. |
+| **The Interviewer** | Gemini 3.1 Flash Lite | The orchestrator. Asks 3–4 questions one at a time, builds a behavioural dossier, and suggests an animal. |
 | **The Converter** | Gemini 3.1 Flash Image | Fuses your photo and dossier into a hybrid animal portrait, sent straight back to the chat. |
 | **The Scripter** | Gemini 3.1 Flash Lite | Writes one paragraph (~60–90 words) of dramatic British wildlife narration. |
 | **The Narrator** | Gemini TTS | Not an agent — the script goes directly to text-to-speech and comes back as a voice note. |
@@ -86,8 +86,11 @@ Feature specs live alongside them as `SPECS/<YYYY-MM-DD>-<feature-name>/`.
 
 ## Status
 
-Phases 1 (repository & gateway) and 2 (the Bouncer vision gate) are
-implemented. The bot long-polls Telegram, and an uploaded photo is downloaded,
-validated, and classified by `gemini-3.1-flash-lite` as human-present or not —
-non-human images get an in-character rejection and a session reset. See
+Phases 1 (repository & gateway), 2 (the Bouncer vision gate), and 3 (the
+Interviewer) are implemented. The bot long-polls Telegram; an uploaded photo is
+downloaded, validated, and classified by `gemini-3.1-flash-lite` as
+human-present or not — non-human images get an in-character rejection and a
+session reset. A human-present photo then starts the interview: 3–4 questions
+asked one at a time, each answer persisted to the session's dossier, ending in
+a summarised profile and a suggested animal handed to the next stage. See
 [`SPECS/ROADMAP.md`](SPECS/ROADMAP.md) for what's next.

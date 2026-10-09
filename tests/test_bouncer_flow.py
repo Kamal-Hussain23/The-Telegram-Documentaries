@@ -55,7 +55,13 @@ def test_non_human_photo_resets_the_session_to_the_initial_phase() -> None:
     assert state.load(42).photo is None
 
 
-def test_human_photo_keeps_the_phase_1_reply() -> None:
+def test_unwired_bot_keeps_the_phase_1_photo_reply() -> None:
+    """A Bouncer pass with no Interviewer wired keeps the placeholder reply.
+
+    Superseded for the *wired* pass path by ``test_interviewer_flow.py``'s
+    ``test_pass_path_replies_with_the_first_question`` (user-approved pass-path
+    change, plan 5.5); this covers the Phase 1/2 configuration fallback only.
+    """
     client = FakeTelegramClient(downloads={"person": fixture_bytes("person.jpg")})
     bot, _ = make_bot(client, StubVisionClient([verdict_json(True)]))
 
