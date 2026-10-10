@@ -16,6 +16,7 @@ from typing import Protocol
 
 from telegram_documentaries.bouncer import REJECTION_TEXT, Bouncer
 from telegram_documentaries.client import validate_image
+from telegram_documentaries.converter import CONVERTER_FAILURE_TEXT, Converter
 from telegram_documentaries.interviewer import Interviewer
 from telegram_documentaries.logutil import describe_message
 from telegram_documentaries.models import Message, PhotoSize, Update
@@ -43,11 +44,13 @@ class UpdatesClient(Protocol):
 
     def send_message(self, chat_id: int, text: str) -> None: ...
 
+    def send_photo(self, chat_id: int, photo: bytes) -> None: ...
+
     def get_file(self, file_id: str) -> bytes: ...
 
 
 def _highest_resolution(photo: PhotoSize) -> tuple[int, int]:
-    return (photo.width or 0) * (photo.height or 0), photo.file_size or 0
+    return (photo.width or 0) * (photo.file_size or 0), photo.file_size or 0
 
 
 def _command(text: str) -> str | None:
@@ -71,11 +74,13 @@ class Bot:
         bouncer: Bouncer | None = None,
         state: StateDriver | None = None,
         interviewer: Interviewer | None = None,
+        converter: Converter | None = None,
     ) -> None:
         self._client = client
         self._bouncer = bouncer
         self._state = state
         self._interviewer = interviewer
+        self._converter = converter
 
     def handle_update(self, update: Update) -> None:
         """Handle one update. Never raises into the polling loop."""
@@ -134,7 +139,13 @@ class Bot:
             return
         if self._interviewer is not None and self._state is not None:
             if self._state.load(message.chat.id).phase is Phase.INTERVIEWING:
-                self._reply(message.chat.id, self._interviewer.answer(message.chat.id, text))
+                reply = self._interviewer.answer(message.chat.id, text)
+                self._reply(message.chat.id, reply)
+                # If the interview just completed and advanced to CONVERTING,
+                # run the Converter immediately in the same turn.
+                session = self._state.load(message.chat.id)
+                if session.phase is Phase.CONVERTING and self._converter is not None:
+                    self._run_converter(message.chat.id)
                 return
         # Other phases (including CONVERTING): the completed dossier must not
         # be re-entered or disturbed — existing behaviour keeps the default reply.
@@ -149,6 +160,30 @@ class Bot:
     def _reply(self, chat_id: int, text: str) -> None:
         self._client.send_message(chat_id=chat_id, text=text)
         logger.info("replied chat_id=%s text=%r", chat_id, text)
+
+    def _run_converter(self, chat_id: int) -> None:
+        """Run the Converter for a chat in CONVERTING phase.
+
+        On success: deliver the hybrid portrait and advance to SCRIPTING.
+        On failure (model error or send failure): stay in CONVERTING for retry.
+        """
+        if self._converter is None or self._state is None:
+            return
+        try:
+            output = self._converter.convert(chat_id)
+            # Deliver the hybrid portrait directly — no intermediate text hop.
+            self._client.send_photo(chat_id, output.image_bytes)
+            logger.info("delivered hybrid portrait to chat_id=%s", chat_id)
+        except Exception:
+            # Graceful degradation: log loudly, friendly in-character reply,
+            # stay in CONVERTING so it can be retried.
+            # Note: converter.convert() may have already advanced the phase
+            # to SCRIPTING; reset it so the conversation can be retried.
+            logger.exception("converter failed for chat %s", chat_id)
+            session = self._state.load(chat_id)
+            session.phase = Phase.CONVERTING
+            self._state.save(session)
+            self._try_reply(chat_id, CONVERTER_FAILURE_TEXT)
 
     def _try_reply(self, chat_id: int, text: str) -> None:
         try:

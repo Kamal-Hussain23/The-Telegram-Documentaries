@@ -1,7 +1,7 @@
-"""Deterministic offline test doubles for the Bouncer and Interviewer suites.
+"""Deterministic offline test doubles for the Bouncer, Interviewer, and Converter suites.
 
 Nothing here touches the network or requires ``GEMINI_API_KEY``: the Gemini
-vision and interview clients are stubbed and the Telegram client is scripted,
+vision, interview, and image clients are stubbed and the Telegram client is scripted,
 so the default suite stays green in CI. The real dependencies land in groups
 2–5 of each phase.
 """
@@ -90,6 +90,43 @@ class StubInterviewClient:
         return item
 
 
+def converter_output_json(
+    image_bytes: bytes | str, confidence: float = 0.95, reason: str = "hybrid portrait generated"
+) -> str:
+    """A raw ``ConverterOutput`` payload exactly as the model would emit it."""
+    import base64
+    if isinstance(image_bytes, bytes):
+        image_b64 = base64.b64encode(image_bytes).decode("ascii")
+    else:
+        image_b64 = image_bytes
+    return json.dumps({"image_bytes": image_b64, "confidence": confidence, "reason": reason})
+
+
+class StubConverterClient:
+    """Scripted Gemini converter client: queues raw structured outputs.
+
+    Structurally implements the real client's ``ConverterClient`` protocol —
+    ``convert`` returns raw JSON for the Converter to parse at the edge — but
+    never touches the network. Every call records the inputs it was handed,
+    and any scripted entry may be an exception instance to simulate Gemini
+    failing mid-conversion.
+    """
+
+    def __init__(self, responses: list[str | BaseException] | None = None) -> None:
+        self._responses = list(responses or [])
+        #: The (image_bytes, dossier_context) of every convert call, in order.
+        self.convert_calls: list[tuple[bytes, str]] = []
+
+    def convert(self, image: bytes, dossier_context: str) -> str:
+        self.convert_calls.append((image, dossier_context))
+        if not self._responses:
+            raise AssertionError("StubConverterClient ran out of scripted responses")
+        item = self._responses.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
 class FakeTelegramClient:
     """Scripted Telegram client: serves updates/downloads, records sends."""
 
@@ -101,6 +138,7 @@ class FakeTelegramClient:
         self._batches = list(batches or [])
         self._downloads = dict(downloads or {})
         self.sent: list[tuple[int, str]] = []
+        self.sent_photos: list[tuple[int, bytes]] = []
         self.downloaded: list[str] = []
         self.offsets: list[int | None] = []
 
@@ -112,6 +150,9 @@ class FakeTelegramClient:
 
     def send_message(self, chat_id: int, text: str) -> None:
         self.sent.append((chat_id, text))
+
+    def send_photo(self, chat_id: int, photo: bytes) -> None:
+        self.sent_photos.append((chat_id, photo))
 
     def get_file(self, file_id: str) -> bytes:
         self.downloaded.append(file_id)
@@ -163,3 +204,21 @@ def text_update(update_id: int, chat_id: int, text: str | None) -> Update:
     if text is not None:
         message["text"] = text
     return Update.model_validate({"update_id": update_id, "message": message})
+
+def verdict_json(human_present: bool) -> str:
+    """A raw ``BouncerVerdict`` payload exactly as the model would emit it."""
+    return json.dumps({"human_present": human_present})
+
+def complete_interview(
+    client: FakeTelegramClient,
+    interview_stub: StubInterviewClient,
+    *,
+    converter_stub: StubConverterClient | None = None,
+    verdicts: list[str] | None = None,
+) -> tuple[Bot, StateDriver]:
+    """Run a full interview to completion, returning the bot and state at CONVERTING phase."""
+    if converter_stub is None:
+        converter_stub = StubConverterClient([])
+    state = StateDriver()
+    vision = StubVisionClient(verdicts if verdicts is not None else [verdict_json(True)])
+    return wired_bot(client, state, converter_stub, interview_stub, vision), state

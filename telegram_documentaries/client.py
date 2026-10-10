@@ -111,6 +111,20 @@ class TelegramClient:
         self._result(response)
 
     @log_call
+    def send_photo(self, chat_id: int, photo: bytes) -> None:
+        """Send a photo directly to the chat via multipart/form-data."""
+        import io
+        files = {"photo": ("portrait.jpg", io.BytesIO(photo), "image/jpeg")}
+        data = {"chat_id": str(chat_id)}
+        response = self._session.post(
+            f"{self._base_url}/sendPhoto",
+            data=data,
+            files=files,
+            timeout=60,
+        )
+        self._result(response)
+
+    @log_call
     def get_file(self, file_id: str) -> bytes:
         """Resolve `file_id` via `getFile`, then download the raw bytes."""
         response = self._session.get(
