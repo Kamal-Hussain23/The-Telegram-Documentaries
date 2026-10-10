@@ -14,7 +14,7 @@ import logging
 import pytest
 from telegram_documentaries.bot import CONVERTER_FAILURE_TEXT, Bot
 from telegram_documentaries.bouncer import Bouncer
-from telegram_documentaries.converter import Converter
+from telegram_documentaries.converter import Converter, ConverterError
 from telegram_documentaries.interviewer import Interviewer
 from telegram_documentaries.state import Dossier, Phase, StateDriver
 from tests.support.fakes import (
@@ -94,12 +94,21 @@ def complete_interview(
     converter_stub: StubConverterClient | None = None,
     verdicts: list[str] | None = None,
 ) -> tuple[Bot, StateDriver]:
-    """Run a full interview to completion, returning the bot and state at CONVERTING phase."""
+    """Run a full interview to completion, returning the bot and state.
+
+    The final answer triggers the Converter in the same turn, so on return the
+    chat has (attempted) a conversion and is at SCRIPTING on success.
+    """
     if converter_stub is None:
         converter_stub = StubConverterClient([])
     state = StateDriver()
     vision = StubVisionClient(verdicts if verdicts is not None else [verdict_json(True)])
-    return wired_bot(client, state, converter_stub, interview_stub, vision), state
+    bot = wired_bot(client, state, converter_stub, interview_stub, vision)
+    bot.handle_update(photo_update(1, chat_id=42, file_id="person"))
+    bot.handle_update(text_update(2, chat_id=42, text="answer one"))
+    bot.handle_update(text_update(3, chat_id=42, text="answer two"))
+    bot.handle_update(text_update(4, chat_id=42, text="answer three"))
+    return bot, state
 
 
 # --- positive path: successful conversion (plan 1.4, validation 1b) -------------
@@ -113,21 +122,18 @@ def test_converter_success_delivers_hybrid_portrait_and_advances_to_scripting() 
     )
     converter_stub = StubConverterClient([converter_output_json(HYBRID)])
     bot, state = complete_interview(client, interview_stub, converter_stub=converter_stub)
-    sent_before = list(client.sent)
-    sent_photos_before = list(client.sent_photos)
 
     # The interview completion triggers the Converter in the same turn.
-    # The final answer (update_id=4) already triggered the converter.
     # Check that the hybrid portrait was delivered.
-    assert len(client.sent_photos) == len(sent_photos_before) + 1
+    assert len(client.sent_photos) == 1
     chat_id, photo_bytes = client.sent_photos[-1]
     assert chat_id == 42
     assert photo_bytes == HYBRID
 
-    # No extra text message sent between converter call and photo delivery.
-    # The only new text message should be the interviewer's reveal (already sent).
-    # The Converter's turn sends ONLY the photo.
-    assert client.sent == sent_before  # no additional text messages
+    # The Converter's turn sends only the photo; the last text is the
+    # Interviewer's in-character reveal.
+    assert client.sent[-1][0] == 42
+    assert ANIMAL in client.sent[-1][1]
 
     # Phase advanced to SCRIPTING
     session = state.load(42)
@@ -190,7 +196,6 @@ def test_converter_failure_logs_error_and_stays_in_converting(
     )
     converter_stub = StubConverterClient([RuntimeError("gemini exploded")])
     bot, state = complete_interview(client, interview_stub, converter_stub=converter_stub)
-    sent_before = list(client.sent)
 
     with caplog.at_level(logging.ERROR):
         # The converter runs in the same turn as the final answer.
@@ -253,21 +258,21 @@ def test_converter_empty_response_logs_error_and_stays_in_converting(
 def test_two_chats_converter_state_isolation() -> None:
     """Two chats in CONVERTING never share state or generated images."""
     client = FakeTelegramClient(downloads={"person": PERSON, "other": OTHER_PERSON})
+    # Chat 1 is driven to completion before chat 2, so the scripted questions
+    # are consumed in two consecutive triples.
     interview_stub = StubInterviewClient(
-        questions=[
-            question_json(Q1),  # chat 1
-            question_json(Q1),  # chat 2
-            question_json(Q2),  # chat 1
-            question_json(Q2),  # chat 2
-            question_json(Q3, is_final=True),  # chat 1
-            question_json(Q3, is_final=True),  # chat 2
-        ],
+        questions=three_questions() * 2,
         profiles=[profile_json(PROFILE, ANIMAL), profile_json("Different profile", "badger")],
     )
     converter_stub = StubConverterClient(
         [converter_output_json(HYBRID), converter_output_json(OTHER_PERSON)]
     )
-    bot, state = make_bot(client, converter_stub, interview_stub, verdicts=[verdict_json(True), verdict_json(True)])
+    bot, state = make_bot(
+        client,
+        converter_stub,
+        interview_stub,
+        verdicts=[verdict_json(True), verdict_json(True)],
+    )
 
     # Chat 1: photo, 3 answers
     bot.handle_update(photo_update(1, chat_id=1, file_id="person"))
@@ -374,7 +379,7 @@ def test_converter_rejects_incomplete_dossier() -> None:
     session.dossier = Dossier(profile="Some profile")
     state.save(session)
 
-    with pytest.raises(Exception):  # ConverterError
+    with pytest.raises(ConverterError):
         converter.convert(99)
 
     # Phase should not have advanced
@@ -393,7 +398,7 @@ def test_converter_rejects_missing_photo() -> None:
     session.dossier = Dossier(profile="Some profile", suggested_animal=ANIMAL)
     state.save(session)
 
-    with pytest.raises(Exception):  # ConverterError
+    with pytest.raises(ConverterError):
         converter.convert(99)
 
     assert state.load(99).phase is Phase.CONVERTING
@@ -411,7 +416,7 @@ def test_converter_rejects_wrong_phase() -> None:
     session.dossier = Dossier(profile="Some profile", suggested_animal=ANIMAL)
     state.save(session)
 
-    with pytest.raises(Exception):  # ConverterError
+    with pytest.raises(ConverterError):
         converter.convert(99)
 
     assert state.load(99).phase is Phase.INTERVIEWING

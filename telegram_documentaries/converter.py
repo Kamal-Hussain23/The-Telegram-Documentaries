@@ -47,7 +47,7 @@ class ConverterOutput(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    image_bytes: str  # base64-encoded image bytes
+    image_bytes: bytes  # decoded hybrid-portrait image bytes
     confidence: float | None = None
     reason: str | None = None
 
@@ -75,16 +75,20 @@ def parse_output(raw: str) -> ConverterOutput:
         raise ConverterError(f"output is not valid JSON: {raw!r}") from exc
     if not isinstance(payload, dict):
         raise ConverterError(f"output must be a JSON object: {raw!r}")
+    encoded = payload.get("image_bytes")
+    if not isinstance(encoded, str):
+        raise ConverterError(f"output does not match schema: {raw!r}")
+    # Real Gemini base64 output is commonly line-wrapped (ASCII whitespace
+    # between lines); strip it before decoding, while still rejecting genuinely
+    # invalid base64 via ``validate=True``.
     try:
-        output = ConverterOutput.model_validate(payload)
+        decoded = base64.b64decode("".join(encoded.split()), validate=True)
+    except ValueError as exc:
+        raise ConverterError(f"image_bytes is not valid base64: {raw!r}") from exc
+    try:
+        return ConverterOutput.model_validate({**payload, "image_bytes": decoded})
     except ValidationError as exc:
         raise ConverterError(f"output does not match schema: {raw!r}") from exc
-    # Decode base64 image_bytes for internal use
-    try:
-        output.image_bytes = base64.b64decode(output.image_bytes)
-    except Exception as exc:
-        raise ConverterError(f"image_bytes is not valid base64: {raw!r}") from exc
-    return output
 
 
 def dossier_context(dossier: Dossier) -> str:
@@ -131,9 +135,8 @@ class Converter:
 
         # On success: persist hybrid image reference and advance phase
         session.dossier.profile = (
-            (session.dossier.profile or "")
-            + f"\n[Hybrid portrait generated: {output.reason or 'success'}]"
-        )
+            session.dossier.profile or ""
+        ) + f"\n[Hybrid portrait generated: {output.reason or 'success'}]"
         session.phase = Phase.SCRIPTING
         self._state.save(session)
 

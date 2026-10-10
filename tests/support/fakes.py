@@ -1,9 +1,9 @@
-"""Deterministic offline test doubles for the Bouncer, Interviewer, and Converter suites.
+"""Deterministic offline test doubles for the Bouncer, Interviewer, Converter, and Scripter suites.
 
 Nothing here touches the network or requires ``GEMINI_API_KEY``: the Gemini
-vision, interview, and image clients are stubbed and the Telegram client is scripted,
-so the default suite stays green in CI. The real dependencies land in groups
-2–5 of each phase.
+vision, interview, image, and script clients are stubbed and the Telegram client
+is scripted, so the default suite stays green in CI. The real dependencies land
+in groups 2–5 of each phase.
 """
 
 from __future__ import annotations
@@ -95,6 +95,7 @@ def converter_output_json(
 ) -> str:
     """A raw ``ConverterOutput`` payload exactly as the model would emit it."""
     import base64
+
     if isinstance(image_bytes, bytes):
         image_b64 = base64.b64encode(image_bytes).decode("ascii")
     else:
@@ -121,6 +122,36 @@ class StubConverterClient:
         self.convert_calls.append((image, dossier_context))
         if not self._responses:
             raise AssertionError("StubConverterClient ran out of scripted responses")
+        item = self._responses.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+def scripter_output_json(script: str) -> str:
+    """A raw ``ScripterOutput`` payload exactly as the model would emit it."""
+    return json.dumps({"script": script})
+
+
+class StubScripterClient:
+    """Scripted Gemini scripter client: queues raw structured outputs.
+
+    Structurally implements the real client's ``ScripterClient`` protocol —
+    ``generate_script`` returns raw JSON for the Scripter to parse at the edge
+    — but never touches the network. Every call records the context it was
+    handed, and any scripted entry may be an exception instance to simulate
+    Gemini failing mid-script.
+    """
+
+    def __init__(self, responses: list[str | BaseException] | None = None) -> None:
+        self._responses = list(responses or [])
+        #: The dossier context of every generate_script call, in order.
+        self.generate_calls: list[str] = []
+
+    def generate_script(self, dossier_context: str) -> str:
+        self.generate_calls.append(dossier_context)
+        if not self._responses:
+            raise AssertionError("StubScripterClient ran out of scripted responses")
         item = self._responses.pop(0)
         if isinstance(item, BaseException):
             raise item
@@ -205,20 +236,7 @@ def text_update(update_id: int, chat_id: int, text: str | None) -> Update:
         message["text"] = text
     return Update.model_validate({"update_id": update_id, "message": message})
 
+
 def verdict_json(human_present: bool) -> str:
     """A raw ``BouncerVerdict`` payload exactly as the model would emit it."""
     return json.dumps({"human_present": human_present})
-
-def complete_interview(
-    client: FakeTelegramClient,
-    interview_stub: StubInterviewClient,
-    *,
-    converter_stub: StubConverterClient | None = None,
-    verdicts: list[str] | None = None,
-) -> tuple[Bot, StateDriver]:
-    """Run a full interview to completion, returning the bot and state at CONVERTING phase."""
-    if converter_stub is None:
-        converter_stub = StubConverterClient([])
-    state = StateDriver()
-    vision = StubVisionClient(verdicts if verdicts is not None else [verdict_json(True)])
-    return wired_bot(client, state, converter_stub, interview_stub, vision), state

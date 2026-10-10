@@ -16,7 +16,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 #: Bump when ``SessionState`` changes shape; older entries are then discarded.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class Phase(StrEnum):
@@ -26,6 +26,7 @@ class Phase(StrEnum):
     INTERVIEWING = "INTERVIEWING"
     CONVERTING = "CONVERTING"
     SCRIPTING = "SCRIPTING"
+    NARRATING = "NARRATING"
 
 
 class Dossier(BaseModel):
@@ -44,6 +45,10 @@ class Dossier(BaseModel):
     #: never sent to the user (requirements decision 6).
     profile: str | None = None
     suggested_animal: str | None = None
+    #: The generated narration paragraph, ready for the Narrator stage (Phase
+    #: 6) to send to TTS. Written by the Scripter on success; ``None`` until
+    #: then.
+    script: str | None = None
     #: The question awaiting an answer is the interview's last one — set when a
     #: final question goes out (model-marked from question 3, forced at 4).
     awaiting_final: bool = False

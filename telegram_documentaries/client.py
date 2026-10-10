@@ -67,7 +67,13 @@ class HttpSession(Protocol):
     ) -> ResponseProtocol: ...
 
     def post(
-        self, url: str, *, json: dict[str, Any] | None = None, timeout: float | None = None
+        self,
+        url: str,
+        *,
+        json: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+        files: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> ResponseProtocol: ...
 
 
@@ -114,6 +120,7 @@ class TelegramClient:
     def send_photo(self, chat_id: int, photo: bytes) -> None:
         """Send a photo directly to the chat via multipart/form-data."""
         import io
+
         files = {"photo": ("portrait.jpg", io.BytesIO(photo), "image/jpeg")}
         data = {"chat_id": str(chat_id)}
         response = self._session.post(

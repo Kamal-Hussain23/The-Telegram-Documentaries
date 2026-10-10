@@ -7,6 +7,7 @@ plan group 1.2/1.3, validation.md check 3.3.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 
 import pytest
@@ -42,6 +43,24 @@ def test_parse_output_reads_minimal_valid_output() -> None:
     assert output.image_bytes == HYBRID
     assert output.confidence is None
     assert output.reason is None
+
+
+def test_parse_output_accepts_line_wrapped_base64() -> None:
+    """Real Gemini base64 output is commonly line-wrapped; whitespace is tolerated."""
+    payload = base64.b64encode(HYBRID).decode("ascii")
+    wrapped = "\n".join(payload[i : i + 76] for i in range(0, len(payload), 76)) or payload
+    raw = json.dumps({"image_bytes": wrapped})
+
+    output = parse_output(raw)
+
+    assert output.image_bytes == HYBRID
+
+
+def test_parse_output_rejects_invalid_base64_even_with_whitespace() -> None:
+    """Stripping whitespace must not let genuinely invalid base64 through."""
+    raw = json.dumps({"image_bytes": "not base64!!"})
+    with pytest.raises(ConverterError):
+        parse_output(raw)
 
 
 def test_parse_output_rejects_free_text() -> None:

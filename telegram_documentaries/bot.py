@@ -20,6 +20,7 @@ from telegram_documentaries.converter import CONVERTER_FAILURE_TEXT, Converter
 from telegram_documentaries.interviewer import Interviewer
 from telegram_documentaries.logutil import describe_message
 from telegram_documentaries.models import Message, PhotoSize, Update
+from telegram_documentaries.scripter import SCRIPTING_FAILURE_TEXT, Scripter
 from telegram_documentaries.state import Phase, StateDriver
 
 logger = logging.getLogger(__name__)
@@ -75,12 +76,14 @@ class Bot:
         state: StateDriver | None = None,
         interviewer: Interviewer | None = None,
         converter: Converter | None = None,
+        scripter: Scripter | None = None,
     ) -> None:
         self._client = client
         self._bouncer = bouncer
         self._state = state
         self._interviewer = interviewer
         self._converter = converter
+        self._scripter = scripter
 
     def handle_update(self, update: Update) -> None:
         """Handle one update. Never raises into the polling loop."""
@@ -146,6 +149,19 @@ class Bot:
                 session = self._state.load(message.chat.id)
                 if session.phase is Phase.CONVERTING and self._converter is not None:
                     self._run_converter(message.chat.id)
+                    session = self._state.load(message.chat.id)
+                # If the Converter just advanced to SCRIPTING, run the Scripter
+                # immediately in the same turn.
+                if session.phase is Phase.SCRIPTING and self._scripter is not None:
+                    self._run_scripter(message.chat.id)
+                return
+        # A chat left in SCRIPTING by a failed Scripter run: any text is a
+        # retry. Commands (/start, /restart) are handled above, so this branch
+        # only sees ordinary conversation — replying re-runs the Scripter
+        # without wiping the dossier.
+        if self._scripter is not None and self._state is not None:
+            if self._state.load(message.chat.id).phase is Phase.SCRIPTING:
+                self._run_scripter(message.chat.id)
                 return
         # Other phases (including CONVERTING): the completed dossier must not
         # be re-entered or disturbed — existing behaviour keeps the default reply.
@@ -184,6 +200,38 @@ class Bot:
             session.phase = Phase.CONVERTING
             self._state.save(session)
             self._try_reply(chat_id, CONVERTER_FAILURE_TEXT)
+
+    def _run_scripter(self, chat_id: int) -> None:
+        """Run the Scripter for a chat in SCRIPTING phase.
+
+        On success: deliver the script text and advance to NARRATING.
+        On failure (model error, malformed output, or send failure): stay in
+        SCRIPTING for retry. ``Scripter.generate`` is decorated with
+        ``log_call``, which already logs the full traceback at ERROR — here we
+        log a concise context line only, so the failure is logged once, loudly.
+        """
+        if self._scripter is None or self._state is None:
+            return
+        try:
+            output = self._scripter.generate(chat_id)
+            # Deliver the script text directly — the Narrator picks it up
+            # separately for voice synthesis.
+            self._client.send_message(chat_id, output.script)
+            # A logged preview of the raw script (repr'd so newlines/whitespace
+            # are visible) so the handoff to the Narrator can be eyeballed in
+            # the console without dumping the whole paragraph every run.
+            preview = output.script if len(output.script) <= 80 else output.script[:77] + "..."
+            logger.info("delivered script to chat_id=%s: %r", chat_id, preview)
+        except Exception:
+            # Graceful degradation: friendly in-character reply, stay in
+            # SCRIPTING so it can be retried. The full traceback is already on
+            # the log from @log_call (or, for a send failure, this line keeps
+            # the failure visible without a second stack dump).
+            logger.error("scripter failed for chat %s; staying in SCRIPTING for retry", chat_id)
+            session = self._state.load(chat_id)
+            session.phase = Phase.SCRIPTING
+            self._state.save(session)
+            self._try_reply(chat_id, SCRIPTING_FAILURE_TEXT)
 
     def _try_reply(self, chat_id: int, text: str) -> None:
         try:

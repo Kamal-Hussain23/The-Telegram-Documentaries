@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from typing import Optional
 
 from google.adk.agents import LlmAgent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
+from google.adk.sessions import Session
 from google.genai import types
 
 from telegram_documentaries.converter import CONVERTER_INSTRUCTION, ConverterOutput
@@ -46,6 +45,7 @@ CONVERTER_TASK = (
 
 class ConverterQuotaExhaustedError(RuntimeError):
     """Raised when API quota is exhausted and retry won't help."""
+
     pass
 
 
@@ -87,10 +87,10 @@ class GeminiConverterClient:
                 session_id=session.id,
             )
 
-    async def _run_with_retry(self, session, message) -> str:
+    async def _run_with_retry(self, session: Session, message: types.Content) -> str:
         """Run the converter with exponential backoff retry."""
         delay = BASE_DELAY
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES + 1):
             try:
@@ -142,4 +142,6 @@ class GeminiConverterClient:
                     raise
 
         # Should not reach here
-        raise last_error
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("converter produced no result")
