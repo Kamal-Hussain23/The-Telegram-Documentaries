@@ -67,6 +67,8 @@ One paragraph of narration built from the dossier.
 - Tone is dramatic British wildlife documentary, drawing on the dossier.
 - Output is parsed against a schema; malformed model output is a handled error.
 
+**Status:** implemented and verified — see `SPECS/2026-10-10-scripter/`.
+
 **Serves:** content.
 
 ## Phase 6 — Narrator

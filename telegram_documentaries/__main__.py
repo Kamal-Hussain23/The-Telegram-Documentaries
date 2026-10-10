@@ -16,6 +16,8 @@ from telegram_documentaries.converter_client import GeminiConverterClient
 from telegram_documentaries.interview_client import GeminiInterviewClient
 from telegram_documentaries.interviewer import Interviewer
 from telegram_documentaries.logutil import configure_logging
+from telegram_documentaries.scripter import Scripter
+from telegram_documentaries.scripter_client import GeminiScripterClient
 from telegram_documentaries.state import StateDriver
 from telegram_documentaries.vision import GeminiVisionClient
 
@@ -46,6 +48,7 @@ def main() -> int:
     state = StateDriver()
     interviewer = Interviewer(state, GeminiInterviewClient(api_key=api_key))
     converter = Converter(state, GeminiConverterClient(api_key=api_key))
+    scripter = Scripter(state, GeminiScripterClient(api_key=api_key))
     try:
         Bot(
             TelegramClient(token=token),
@@ -53,6 +56,7 @@ def main() -> int:
             state=state,
             interviewer=interviewer,
             converter=converter,
+            scripter=scripter,
         ).run()
     except KeyboardInterrupt:
         logger.info("bye")
