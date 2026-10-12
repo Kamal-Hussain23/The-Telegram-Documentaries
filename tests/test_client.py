@@ -39,9 +39,16 @@ class FakeSession:
         return FakeResponse(self.get_payload)
 
     def post(
-        self, url: str, json: dict[str, Any] | None = None, timeout: float | None = None
+        self,
+        url: str,
+        json: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+        files: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> FakeResponse:
-        self.post_calls.append({"url": url, "json": json, "timeout": timeout})
+        self.post_calls.append(
+            {"url": url, "json": json, "data": data, "files": files, "timeout": timeout}
+        )
         return FakeResponse(self.post_payload)
 
 
@@ -104,3 +111,45 @@ def test_api_error_flag_raises_loudly() -> None:
         client.send_message(chat_id=42, text="hey mate!")
 
     assert "chat not found" in str(excinfo.value)
+
+
+def test_send_voice_posts_ogg_multipart_to_the_chat() -> None:
+    """A voice note goes out as multipart/form-data, mirroring send_photo."""
+    import io
+
+    session = FakeSession()
+    client = TelegramClient(token="t", session=session)
+    audio = b"OggS fake voice note payload"
+
+    client.send_voice(chat_id=42, voice=audio, mime_type="audio/ogg", filename="narration_42.ogg")
+
+    call = session.post_calls[0]
+    assert call["url"].endswith("/sendVoice")
+    assert call["data"] == {"chat_id": "42"}
+    name, handle, mime_type = call["files"]["voice"]
+    assert name == "narration_42.ogg"
+    assert mime_type == "audio/ogg"
+    assert isinstance(handle, io.BytesIO)
+    assert handle.getvalue() == audio
+
+
+def test_send_voice_accepts_mp3_mime_and_extension() -> None:
+    session = FakeSession()
+    client = TelegramClient(token="t", session=session)
+    audio = b"ID3 fake mp3 payload"
+
+    client.send_voice(chat_id=42, voice=audio, mime_type="audio/mpeg", filename="voice.mp3")
+
+    name, _, mime_type = session.post_calls[0]["files"]["voice"]
+    assert name == "voice.mp3"
+    assert mime_type == "audio/mpeg"
+
+
+def test_send_voice_api_error_raises_loudly() -> None:
+    session = FakeSession(post_payload={"ok": False, "description": "voice too long"})
+    client = TelegramClient(token="t", session=session)
+
+    with pytest.raises(TelegramApiError) as excinfo:
+        client.send_voice(chat_id=42, voice=b"OggS", mime_type="audio/ogg", filename="v.ogg")
+
+    assert "voice too long" in str(excinfo.value)

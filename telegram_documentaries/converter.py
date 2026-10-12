@@ -22,8 +22,8 @@ from telegram_documentaries.state import Dossier, Phase, StateDriver
 #: cheeky, and explicit that we can retry.
 CONVERTER_FAILURE_TEXT = (
     "Oh dear — the darkroom spirits are being temperamental and the hybrid "
-    "refuses to develop. The dossier is safe, so send another photo when "
-    "you're ready and we'll give it another go."
+    "portrait refuses to develop. Not to worry: your dossier is safe, so we "
+    "shall carry on and narrate your story without it."
 )
 
 #: Instruction handed to the Gemini agent; the model reports the hybrid portrait
