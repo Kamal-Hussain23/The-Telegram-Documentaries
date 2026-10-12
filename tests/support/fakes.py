@@ -12,8 +12,13 @@ import json
 from pathlib import Path
 
 from telegram_documentaries.models import Update
+from telegram_documentaries.narrator import NarratorResult
 
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures"
+
+#: Deterministic stand-in for a real OGG voice note — the Narrator treats the
+#: audio payload as opaque bytes, so offline tests only need the magic prefix.
+STUB_OGG = b"OggS" + bytes(range(27, 27 + 64))
 
 
 def fixture_bytes(name: str) -> bytes:
@@ -158,6 +163,31 @@ class StubScripterClient:
         return item
 
 
+class StubTTSClient:
+    """Scripted Gemini TTS client: queues ``NarratorResult``s or exceptions.
+
+    Structurally implements the real client's ``GeminiTTSClient`` protocol —
+    ``synthesize`` returns the audio payload and format for the Narrator — but
+    never touches the network. Every call records the exact script text it was
+    handed, and any scripted entry may be an exception instance to simulate
+    Gemini failing mid-synthesis.
+    """
+
+    def __init__(self, responses: list[NarratorResult | BaseException] | None = None) -> None:
+        self._responses = list(responses or [])
+        #: The exact script text of every synthesize call, in order.
+        self.synthesize_calls: list[str] = []
+
+    def synthesize(self, text: str) -> NarratorResult:
+        self.synthesize_calls.append(text)
+        if not self._responses:
+            raise AssertionError("StubTTSClient ran out of scripted responses")
+        item = self._responses.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
 class FakeTelegramClient:
     """Scripted Telegram client: serves updates/downloads, records sends."""
 
@@ -170,6 +200,8 @@ class FakeTelegramClient:
         self._downloads = dict(downloads or {})
         self.sent: list[tuple[int, str]] = []
         self.sent_photos: list[tuple[int, bytes]] = []
+        #: Every send_voice call: (chat_id, voice bytes, mime_type, filename).
+        self.sent_voices: list[tuple[int, bytes, str, str]] = []
         self.downloaded: list[str] = []
         self.offsets: list[int | None] = []
 
@@ -184,6 +216,9 @@ class FakeTelegramClient:
 
     def send_photo(self, chat_id: int, photo: bytes) -> None:
         self.sent_photos.append((chat_id, photo))
+
+    def send_voice(self, chat_id: int, voice: bytes, *, mime_type: str, filename: str) -> None:
+        self.sent_voices.append((chat_id, voice, mime_type, filename))
 
     def get_file(self, file_id: str) -> bytes:
         self.downloaded.append(file_id)

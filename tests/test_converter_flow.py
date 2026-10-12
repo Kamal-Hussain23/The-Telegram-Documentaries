@@ -206,9 +206,9 @@ def test_converter_failure_logs_error_and_stays_in_converting(
     assert client.sent[-1] == (42, CONVERTER_FAILURE_TEXT)
     assert any(record.levelno >= logging.ERROR for record in caplog.records)
 
-    # Phase stays CONVERTING (can be retried)
+    # Phase advances to SCRIPTING so narration can proceed even without portrait
     session = state.load(42)
-    assert session.phase is Phase.CONVERTING
+    assert session.phase is Phase.SCRIPTING
 
 
 def test_converter_malformed_output_logs_error_and_stays_in_converting(
@@ -229,7 +229,7 @@ def test_converter_malformed_output_logs_error_and_stays_in_converting(
     assert client.sent[-1] == (42, CONVERTER_FAILURE_TEXT)
     assert any(record.levelno >= logging.ERROR for record in caplog.records)
     session = state.load(42)
-    assert session.phase is Phase.CONVERTING
+    assert session.phase is Phase.SCRIPTING
 
 
 def test_converter_empty_response_logs_error_and_stays_in_converting(
@@ -249,7 +249,7 @@ def test_converter_empty_response_logs_error_and_stays_in_converting(
     assert client.sent[-1] == (42, CONVERTER_FAILURE_TEXT)
     assert any(record.levelno >= logging.ERROR for record in caplog.records)
     session = state.load(42)
-    assert session.phase is Phase.CONVERTING
+    assert session.phase is Phase.SCRIPTING
 
 
 # --- cross-chat isolation (validation 3.6, 4.4) ---------------------------------
@@ -326,41 +326,43 @@ def test_send_photo_failure_degrades_gracefully(
 
     # Error logged
     assert any(record.levelno >= logging.ERROR for record in caplog.records)
-    # Phase stays CONVERTING (can be retried)
+    # Phase advances to SCRIPTING so narration can proceed even without portrait
     session = state.load(42)
-    assert session.phase is Phase.CONVERTING
+    assert session.phase is Phase.SCRIPTING
     # Friendly reply sent
     assert client.sent[-1] == (42, CONVERTER_FAILURE_TEXT)
 
 
-# --- retry after failure (validation 3.5) ---------------------------------------
+# --- failure advances to SCRIPTING (validation 3.5, Phase 6 amendment) ----------
 
 
-def test_converter_can_be_retried_after_failure() -> None:
-    """After a failure, a new final answer re-triggers the Converter."""
+def test_converter_failure_advances_to_scripting_without_a_converter_retry() -> None:
+    """Phase 6 amendment: a failed portrait skips ahead to the Scripter.
+
+    The chat advances to SCRIPTING so the narration still happens without a
+    hybrid portrait; the Converter is not retried automatically (a fresh photo,
+    not a text reply, is what starts a new conversion).
+    """
     client = client_with_person()
-    # First two attempts fail, third succeeds
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
-    converter_stub = StubConverterClient(
-        [
-            RuntimeError("first attempt failed"),
-            "not valid json",
-            converter_output_json(HYBRID),
-        ]
-    )
+    converter_stub = StubConverterClient([RuntimeError("image model is down")])
     bot, state = make_bot(client, converter_stub, interview_stub)
 
-    # First interview completion: first converter attempt fails
     bot.handle_update(photo_update(1, chat_id=42, file_id="person"))
     bot.handle_update(text_update(2, chat_id=42, text="answer one"))
     bot.handle_update(text_update(3, chat_id=42, text="answer two"))
     bot.handle_update(text_update(4, chat_id=42, text="answer three"))
 
     session = state.load(42)
-    assert session.phase is Phase.CONVERTING
+    assert session.phase is Phase.SCRIPTING
     assert client.sent[-1] == (42, CONVERTER_FAILURE_TEXT)
+
+    # A later text does not silently re-run the Converter (no Scripter is
+    # wired here, so the chat simply parks in SCRIPTING awaiting the Scripter).
+    bot.handle_update(text_update(5, chat_id=42, text="hello?"))
+    assert len(converter_stub.convert_calls) == 1
 
 
 # --- boundary: CONVERTING phase without completed dossier -----------------------

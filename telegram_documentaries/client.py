@@ -132,6 +132,21 @@ class TelegramClient:
         self._result(response)
 
     @log_call
+    def send_voice(self, chat_id: int, voice: bytes, *, mime_type: str, filename: str) -> None:
+        """Send a voice note via multipart/form-data (OGG/Opus or MP3)."""
+        import io
+
+        files = {"voice": (filename, io.BytesIO(voice), mime_type)}
+        data = {"chat_id": str(chat_id)}
+        response = self._session.post(
+            f"{self._base_url}/sendVoice",
+            data=data,
+            files=files,
+            timeout=60,
+        )
+        self._result(response)
+
+    @log_call
     def get_file(self, file_id: str) -> bytes:
         """Resolve `file_id` via `getFile`, then download the raw bytes."""
         response = self._session.get(

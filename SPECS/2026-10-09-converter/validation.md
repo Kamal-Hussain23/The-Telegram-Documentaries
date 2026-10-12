@@ -22,13 +22,15 @@ checks, then the gate.
   Converter's model call and the photo delivery.
 - [x] **(c) Failure to generate the image produces a logged, graceful user-facing message.**
   Assert that when the stub raises or returns schema-violating output, the
-  conversation logs loudly, stays in `CONVERTING`, and replies with a friendly
+  conversation logs loudly, advances to `SCRIPTING` (Phase 6 amendment — so the
+  narration still happens without a portrait), and replies with a friendly
   in-character message — no traceback, no crash, polling keeps running.
 
 ## 2. Required tests — both paths, precise strategy
 
 - [x] **Negative test exists and passes:** converter failure (stub raises or
-  returns malformed) → logged error, friendly reply, phase stays at CONVERTING.
+  returns malformed) → logged error, friendly reply, phase advances to
+  `SCRIPTING` (Phase 6 amendment — was "stays at CONVERTING").
   (Corresponds to plan group 1.5.)
 - [x] **Positive test exists and passes:** image + dossier → hybrid portrait
   generated → image delivered via Telegram, phase advances to SCRIPTING.
@@ -70,10 +72,11 @@ checks, then the gate.
   adds a third state, retry, or maps uncertainty to rejection, the choice is typed
   in the model and logged (per plan Risks) — confirm it is covered by a test
   either way.
-- [x] **3.5 Failure stays in CONVERTING, does not advance.** On a failed verdict,
-  the phase remains at `CONVERTING`; the conversation does not advance to
-  `SCRIPTING` until a successful conversion occurs. The reset/retry path is
-  exercised in the negative test.
+- [x] **3.5 Failure advances to SCRIPTING (Phase 6 amendment).** On a failed
+  verdict, the phase advances to `SCRIPTING` (was: remained at `CONVERTING`)
+  so the Scripter and Narrator still run without a hybrid portrait; the
+  Converter is not retried automatically. The path is exercised in the
+  negative test.
 - [x] **3.6 Single shared state driver.** All session reads/writes go through
   one state-driver module; no stage touches session state directly. Schema is
   versioned and keyed by `chat_id`, in-memory only.

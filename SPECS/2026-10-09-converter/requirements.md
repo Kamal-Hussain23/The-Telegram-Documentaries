@@ -17,7 +17,7 @@ On a photo interview completion (`phase is CONVERTING`):
 3. Send **both** the image bytes and the dossier text as **multimodal input** to `gemini-3.1-flash-image` through Google ADK, with a structured output schema.
 4. The model fuses the user's likeness with an **animal archetype** reflecting their quirks (e.g., a caffeinated badger, a meticulous beaver) and returns a **hybrid portrait image**.
 5. Use the **Telegram Bot API** to deliver the rendered image directly to the user's chat — **no intermediate text hop**.
-6. If the model fails to produce a valid image, log the error loudly and reply with a friendly in-character message — the conversation degrades gracefully (TECH.md: no crash, no traceback).
+6. If the model fails to produce a valid image, log the error loudly and reply with a friendly in-character message — the conversation degrades gracefully (TECH.md: no crash, no traceback). **Phase 6 amendment:** the chat then advances to `SCRIPTING` so the Scripter and Narrator still run without a hybrid portrait (see `SPECS/2026-10-11-narrator/`); it no longer parks in `CONVERTING`.
 7. On success, advance the state machine to `SCRIPTING` (the Scripter stage), persisting the hybrid image reference for the next stage.
 8. Add the **ADK wiring** needed to hook the agent into the pipeline, following the same patterns as `vision.py` (Bouncer) and `interview_client.py` (Interviewer).
 
@@ -34,7 +34,7 @@ On a photo interview completion (`phase is CONVERTING`):
   - Returns the **rendered hybrid portrait** (image bytes) from the model's final response.
 - **Telegram dispatch**: use the existing `TelegramClient.send_photo` (or equivalent) to deliver the rendered image directly to the user's chat.
 - **State advancement**: on successful conversion, advance the phase from `CONVERTING` to `SCRIPTING`, preserving the photo reference for the Scripter stage.
-- **Graceful degradation**: if the model fails (validation error, timeout, unstructured output), log loudly, do NOT crash, and reply with a friendly in-character message. The conversation stays in `CONVERTING` so it can be retried.
+- **Graceful degradation**: if the model fails (validation error, timeout, unstructured output), log loudly, do NOT crash, and reply with a friendly in-character message. **Phase 6 amendment:** the conversation advances to `SCRIPTING` so the narration still happens without the portrait (the original "stay in `CONVERTING` so it can be retried" is superseded).
 - **ADK dependency**: install `google-adk` and `google-genai` (pinned, per TECH.md lockfile hygiene). `GEMINI_API_KEY` read from `.env` via `python-dotenv` only.
 - **Tests**: Red/Green TDD — tests written before the code they cover. Fixture images live under `tests/fixtures/`. The default suite stays green offline (stubbed Gemini client); a live opt-in check exists for real `gemini-3.1-flash-image` classification.
 
@@ -56,7 +56,7 @@ These are fixed for this feature; deviation requires updating the specs in `SPEC
 3. **Output schema:** a Pydantic model (`ConverterOutput`) with at least an `image_bytes` field (base64-encoded or raw) and a `confidence`/`reason` field. The model's response is always parsed against this schema; free text is never interpreted downstream.
 4. **Session state:** versioned schema, keyed by `chat_id`, in-memory only, behind the one shared `StateDriver`. All reads/writes go through the driver — no stage touches state directly.
 5. **Telegram dispatch:** deliver the rendered image via `send_photo` (Telegram Bot API). No intermediate text hop.
-6. **Phase advancement:** on success, advance from `CONVERTING → SCRIPTING`. On failure, stay in `CONVERTING` so it can be retried; never advance on a bad verdict.
+6. **Phase advancement:** on success, advance from `CONVERTING → SCRIPTING`. On failure, **advance to `SCRIPTING` anyway** (Phase 6 amendment) so the Scripter and Narrator still run — the portrait is skipped, never retried. (Phase 4 originally required staying in `CONVERTING`; see `SPECS/2026-10-11-narrator/`.)
 7. **Untrusted input at the boundary:** downloaded image bytes and Telegram / Gemini payloads are treated as arbitrary. Size, type, and shape are validated at the edge before the model sees them; raw dicts never cross a module boundary.
 8. **Logging:** decorator-based structured logging via the existing `logutil.log_call` (entry/exit/duration/exception), consistent with TECH.md — no logging statements mixed into business logic.
 9. **Testing:** Red/Green TDD — tests written before the code they cover. `scripts/test` (pytest + ruff + mypy) is the ground truth and must stay green.
@@ -69,7 +69,7 @@ These are fixed for this feature; deviation requires updating the specs in `SPEC
 
 ## Verification
 
-- **Negative test:** converter failure (stub raises or returns malformed) → logged error, friendly reply, phase stays at CONVERTING.
+- **Negative test:** converter failure (stub raises or returns malformed) → logged error, friendly reply, phase advances to `SCRIPTING` (Phase 6 amendment; was "stays at CONVERTING").
 - **Positive test:** image + dossier → verdict says hybrid portrait generated → image delivered via Telegram, phase advances to SCRIPTING.
 - Both paths exercised with a stubbed Gemini client so `scripts/test` runs offline; a live opt-in check exists for real `gemini-3.1-flash-image` classification (details in `validation.md`).
 - `scripts/test` runs green (pytest + ruff + mypy) with no `GEMINI_API_KEY` set and no network access.
