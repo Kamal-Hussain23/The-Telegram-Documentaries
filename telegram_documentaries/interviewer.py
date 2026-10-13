@@ -144,10 +144,9 @@ def _reveal_reply(suggested_animal: str) -> str:
 
 
 class Interviewer:
-    """Owns the interview turn loop and advances INTERVIEWING → SCRIPTING directly."""
+    """Owns the interview turn loop and advances INTERVIEWING → CONVERTING."""
 
     def __init__(self, state: StateDriver, client: InterviewClient) -> None:
-        # Converter stage removed; chat advances INTERVIEWING → SCRIPTING directly
         self._state = state
         self._client = client
 
@@ -209,6 +208,6 @@ class Interviewer:
         parsed = parse_profile(self._client.synthesize_profile(dossier_context(dossier)))
         dossier.profile = parsed.profile
         dossier.suggested_animal = parsed.suggested_animal
-        session.phase = Phase.SCRIPTING
+        session.phase = Phase.CONVERTING
         self._state.save(session)
         return _reveal_reply(parsed.suggested_animal)

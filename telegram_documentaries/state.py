@@ -23,7 +23,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 #: Bump when ``SessionState`` changes shape; older entries are then discarded.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 #: Purge ALL temporary media scoped to *chat_id*.
@@ -45,7 +45,10 @@ def _purge_chat_temp_files(chat_id: int) -> None:
             # Original photo bytes that may have been cached on disk
             elif name.startswith(f"photo_{chat_id}_"):
                 file_path.unlink()
-            
+            # Converted hybrid images from the Converter stage
+            elif name.startswith(f"converted_{chat_id}_"):
+                file_path.unlink()
+
         except OSError:
             pass
 
@@ -55,6 +58,7 @@ class Phase(StrEnum):
 
     AWAITING_PHOTO = "AWAITING_PHOTO"
     INTERVIEWING = "INTERVIEWING"
+    CONVERTING = "CONVERTING"
     SCRIPTING = "SCRIPTING"
     NARRATING = "NARRATING"
 
@@ -129,7 +133,8 @@ class StateDriver:
            is terminated.
         2. **Purge Ephemeral Assets** — any temporary media on disk scoped to this
            chat_id are deleted: narrator voice notes (``narration_<chat_id>_*``),
-           cached original photos (``photo_<chat_id>_*``).
+           cached original photos (``photo_<chat_id>_*``), and converted hybrids
+           (``converted_<chat_id>_*``).
         3. **Re-initialize Agent Memory** — conversation history buffers (dossier,
            profile, suggested_animal, script) are cleared, resetting the
            conversation back to the greeting stage.

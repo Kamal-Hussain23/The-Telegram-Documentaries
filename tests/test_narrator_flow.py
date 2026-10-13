@@ -2,8 +2,8 @@
 
 Reference: SPECS/2026-10-11-narrator/requirements.md acceptance criteria,
 plan.md groups 5.1–5.2 and 6.5, validation.md check 5. Everything runs offline
-against the scripted TTS client; the pipeline (photo → interview → scripter →
-narrator) is exercised through the Bot.
+against the scripted TTS client; the pipeline (photo → interview → converter
+→ scripter → narrator) is exercised through the Bot.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import logging
 import pytest
 from telegram_documentaries.bot import REPLY_TEXT, Bot
 from telegram_documentaries.bouncer import Bouncer
+from telegram_documentaries.converter import Converter
 from telegram_documentaries.interviewer import Interviewer
 from telegram_documentaries.narrator import NARRATOR_FAILURE_TEXT, Narrator, NarratorResult
 from telegram_documentaries.scripter import Scripter
@@ -20,10 +21,12 @@ from telegram_documentaries.state import Phase, StateDriver
 from tests.support.fakes import (
     STUB_OGG,
     FakeTelegramClient,
+    StubConverterClient,
     StubInterviewClient,
     StubScripterClient,
     StubTTSClient,
     StubVisionClient,
+    converter_output_json,
     fixture_bytes,
     photo_update,
     profile_json,
@@ -56,6 +59,9 @@ SCRIPT_TWO = (
 
 STUB_OGG_TWO = b"OggS" + b"B" * 64
 
+HYBRID_IMAGE = b"\xff\xd8\xffhybrid-portrait-bytes"
+HYBRID_IMAGE_TWO = b"\xff\xd8\xffhybrid-portrait-bytes-two"
+
 
 def three_questions() -> list[str]:
     """The model plays nicely: finishes at the floor of three questions."""
@@ -70,6 +76,7 @@ def wired_bot(
     client: FakeTelegramClient,
     state: StateDriver,
     interview_stub: StubInterviewClient,
+    converter_stub: StubConverterClient,
     scripter_stub: StubScripterClient,
     tts_stub: StubTTSClient,
     vision: StubVisionClient,
@@ -83,6 +90,7 @@ def wired_bot(
             bouncer=Bouncer(vision),
             state=state,
             interviewer=Interviewer(state, interview_stub),
+            converter=Converter(state, converter_stub, client),
             scripter=Scripter(state, scripter_stub),
             narrator=Narrator(state, tts_stub, client),
         )
@@ -91,6 +99,7 @@ def wired_bot(
         bouncer=Bouncer(vision),
         state=state,
         interviewer=Interviewer(state, interview_stub),
+        converter=Converter(state, converter_stub, client),
         scripter=Scripter(state, scripter_stub),
     )
 
@@ -100,6 +109,7 @@ def make_bot(
     *,
     tts_responses: list[NarratorResult | BaseException] | None = None,
     verdicts: list[str] | None = None,
+    converter_responses: list[str | BaseException] | None = None,
     with_narrator: bool = True,
 ) -> tuple[Bot, StateDriver, StubTTSClient]:
     state = StateDriver()
@@ -107,12 +117,16 @@ def make_bot(
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
+    converter_stub = StubConverterClient(
+        converter_responses or [converter_output_json(HYBRID_IMAGE)]
+    )
     scripter_stub = StubScripterClient([scripter_output_json(SCRIPT)])
     tts_stub = StubTTSClient(tts_responses)
     bot = wired_bot(
         client,
         state,
         interview_stub,
+        converter_stub,
         scripter_stub,
         tts_stub,
         vision,
@@ -252,6 +266,9 @@ def test_two_chats_each_get_their_own_voice_notes() -> None:
         questions=three_questions() * 2,
         profiles=[profile_json(PROFILE, ANIMAL), profile_json("A different profile", "badger")],
     )
+    converter_stub = StubConverterClient(
+        [converter_output_json(HYBRID_IMAGE), converter_output_json(HYBRID_IMAGE_TWO)]
+    )
     scripter_stub = StubScripterClient(
         [scripter_output_json(SCRIPT), scripter_output_json(SCRIPT_TWO)]
     )
@@ -265,6 +282,7 @@ def test_two_chats_each_get_their_own_voice_notes() -> None:
         client,
         state,
         interview_stub,
+        converter_stub,
         scripter_stub,
         tts_stub,
         vision,

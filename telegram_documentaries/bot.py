@@ -24,6 +24,7 @@ from typing import Protocol
 
 from telegram_documentaries.bouncer import REJECTION_TEXT, Bouncer
 from telegram_documentaries.client import validate_image
+from telegram_documentaries.converter import Converter
 from telegram_documentaries.interviewer import Interviewer
 from telegram_documentaries.logutil import describe_message
 from telegram_documentaries.models import Message, PhotoSize, Update
@@ -46,6 +47,26 @@ ERROR_TEXT = "Sorry, something went wrong on my end. Please try again."
 
 #: The commands that purge the session before any phase routing (plan 5.1).
 COMMANDS = frozenset({"/start", "/restart"})
+
+# --- Wrong-payload reply constants (Phase 7: Resilience) ---
+
+#: AWAITING_PHOTO + text/media (not /start or /restart): photo needed.
+AWAITING_PHOTO_REPLY = "I need a portrait photo to begin — send me a picture of yourself!"
+
+#: INTERVIEWING + photo (second photo mid-interview): mid-interview reply.
+INTERVIEWING_PHOTO_REPLY = "We're mid-interview! Just answer the question and I'll continue."
+
+#: INTERVIEWING + sticker/voice/video/document: text-only reply.
+INTERVIEWING_TEXT_REPLY = "Please reply with text — I'm listening for your answer."
+
+#: CONVERTING + any payload: developing portrait reply.
+CONVERTING_REPLY = "I'm developing your hybrid portrait in the darkroom — one moment..."
+
+#: SCRIPTING + photo/media (not text retry): script-writing reply.
+SCRIPTING_REPLY = "The script is being written — reply with anything to retry narration."
+
+#: NARRATING + photo/media (not text retry): recording reply.
+NARRATING_REPLY = "The voice note is being recorded — reply with anything to retry."
 
 
 class UpdatesClient(Protocol):
@@ -83,6 +104,7 @@ class Bot:
         bouncer: Bouncer | None = None,
         state: StateDriver | None = None,
         interviewer: Interviewer | None = None,
+        converter: Converter | None = None,
         scripter: Scripter | None = None,
         narrator: Narrator | None = None,
     ) -> None:
@@ -90,6 +112,7 @@ class Bot:
         self._bouncer = bouncer
         self._state = state
         self._interviewer = interviewer
+        self._converter = converter
         self._scripter = scripter
         self._narrator = narrator
 
@@ -106,7 +129,29 @@ class Bot:
             elif message.text is not None:
                 self._handle_text(message)
             else:
-                # A non-text payload (sticker, voice note): the default reply.
+                # Non-text, non-photo payload (sticker, voice, video, document)
+                # Apply wrong-payload guards based on phase
+                if self._state is not None:
+                    session = self._state.load(message.chat.id)
+                    phase = session.phase
+
+                    if phase is Phase.AWAITING_PHOTO:
+                        self._reply(message.chat.id, AWAITING_PHOTO_REPLY)
+                        return
+                    if phase is Phase.INTERVIEWING:
+                        self._reply(message.chat.id, INTERVIEWING_TEXT_REPLY)
+                        return
+                    if phase is Phase.CONVERTING:
+                        self._reply(message.chat.id, CONVERTING_REPLY)
+                        return
+                    if phase is Phase.SCRIPTING:
+                        self._reply(message.chat.id, SCRIPTING_REPLY)
+                        return
+                    if phase is Phase.NARRATING:
+                        self._reply(message.chat.id, NARRATING_REPLY)
+                        return
+
+                # Fallback for unconfigured phases
                 self._reply(message.chat.id, REPLY_TEXT)
         except Exception:
             # The conversation path degrades gracefully: log loudly, keep polling.
@@ -119,6 +164,26 @@ class Bot:
             # old behaviour rather than crashing the update.
             self._reply(message.chat.id, REPLY_TEXT)
             return
+
+        # Wrong-payload guards for photo inbound
+        if self._state is not None:
+            session = self._state.load(message.chat.id)
+            phase = session.phase
+
+            if phase is Phase.INTERVIEWING:
+                # Second photo mid-interview
+                self._reply(message.chat.id, INTERVIEWING_PHOTO_REPLY)
+                return
+            if phase is Phase.CONVERTING:
+                self._reply(message.chat.id, CONVERTING_REPLY)
+                return
+            if phase is Phase.SCRIPTING:
+                self._reply(message.chat.id, SCRIPTING_REPLY)
+                return
+            if phase is Phase.NARRATING:
+                self._reply(message.chat.id, NARRATING_REPLY)
+                return
+            # AWAITING_PHOTO falls through to normal bouncer flow
 
         photo = max(message.photo, key=_highest_resolution)
         image = self._client.get_file(photo.file_id)
@@ -148,20 +213,37 @@ class Bot:
         if command is not None:
             self._handle_command(message)
             return
+
+        # Wrong-payload guards for text inbound (non-command)
+        if self._state is not None:
+            session = self._state.load(message.chat.id)
+            phase = session.phase
+
+            if phase is Phase.AWAITING_PHOTO:
+                # Text during photo stage
+                self._reply(message.chat.id, AWAITING_PHOTO_REPLY)
+                return
+            if phase is Phase.CONVERTING:
+                # Any text during converting
+                self._reply(message.chat.id, CONVERTING_REPLY)
+                return
+            # INTERVIEWING, SCRIPTING, NARRATING fall through to existing handlers
+
         if self._interviewer is not None and self._state is not None:
             if self._state.load(message.chat.id).phase is Phase.INTERVIEWING:
                 reply = self._interviewer.answer(message.chat.id, text)
                 self._reply(message.chat.id, reply)
-                # If the interview just completed, run the rest of the pipeline
-                # immediately in the same turn: the Scripter, then the Narrator.
-                # The Converter stage has been removed, so the chat advances
-                # directly from INTERVIEWING to SCRIPTING.
+                # If the interview just completed, run the Converter next
+                # (INTERVIEWING -> CONVERTING -> SCRIPTING in sequence).
                 session = self._state.load(message.chat.id)
-                if session.phase is Phase.SCRIPTING and self._scripter is not None:
-                    self._run_scripter(message.chat.id)
+                if session.phase is Phase.CONVERTING and self._converter is not None:
+                    self._run_converter(message.chat.id)
                     session = self._state.load(message.chat.id)
-                    if session.phase is Phase.NARRATING and self._narrator is not None:
-                        self._run_narrator(message.chat.id)
+                    if session.phase is Phase.SCRIPTING and self._scripter is not None:
+                        self._run_scripter(message.chat.id)
+                        session = self._state.load(message.chat.id)
+                        if session.phase is Phase.NARRATING and self._narrator is not None:
+                            self._run_narrator(message.chat.id)
                 return
         # A chat left in SCRIPTING by a failed Scripter run: any text is a
         # retry. Commands (/start, /restart) are handled above, so this branch
@@ -226,6 +308,23 @@ class Bot:
             session.phase = Phase.SCRIPTING
             self._state.save(session)
             self._try_reply(chat_id, SCRIPTING_FAILURE_TEXT)
+
+    def _run_converter(self, chat_id: int) -> None:
+        """Run the Converter for a chat in CONVERTING phase.
+
+        The Converter generates a hybrid portrait and sends it as a photo.
+        On success: image already sent by Converter, phase advanced to SCRIPTING.
+        On failure: Converter handles the failure text and phase advance internally.
+        """
+        if self._converter is None or self._state is None:
+            return
+        try:
+            self._converter.generate_and_send(chat_id)
+        except Exception:
+            # The Converter's generate_and_send handles its own failures
+            # (sends CONVERTER_FAILURE_TEXT, advances to SCRIPTING).
+            # This catch is a safety net only.
+            logger.exception("converter raised unexpectedly for chat %s", chat_id)
 
     def _run_narrator(self, chat_id: int) -> None:
         """Run the Narrator stage for a chat in NARRATING phase.
