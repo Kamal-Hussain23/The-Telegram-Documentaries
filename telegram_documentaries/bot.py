@@ -51,10 +51,16 @@ COMMANDS = frozenset({"/start", "/restart"})
 # --- Wrong-payload reply constants (Phase 7: Resilience) ---
 
 #: AWAITING_PHOTO + text/media (not /start or /restart): photo needed.
-AWAITING_PHOTO_REPLY = "I need a portrait photo to begin — send me a picture of yourself!"
+AWAITING_PHOTO_REPLY = (
+    "Please upload a clear portrait photo to begin — "
+    "I need to see your face to start the documentary interview!"
+)
 
 #: INTERVIEWING + photo (second photo mid-interview): mid-interview reply.
-INTERVIEWING_PHOTO_REPLY = "We're mid-interview! Just answer the question and I'll continue."
+INTERVIEWING_PHOTO_REPLY = (
+    "We're mid-interview! Please finish answering the current question with text, "
+    "or type /restart to start fresh with a new photo."
+)
 
 #: INTERVIEWING + sticker/voice/video/document: text-only reply.
 INTERVIEWING_TEXT_REPLY = "Please reply with text — I'm listening for your answer."
@@ -188,7 +194,19 @@ class Bot:
         photo = max(message.photo, key=_highest_resolution)
         image = self._client.get_file(photo.file_id)
         validate_image(image, "image/jpeg")
-        verdict = self._bouncer.classify(image)
+
+        # Defensive guard: wrap Bouncer vision call with timeout/error handling
+        try:
+            verdict = self._bouncer.classify(image)
+        except Exception as exc:
+            # Vision API timeout or error - log and offer retry
+            logger.error("bouncer vision failed for chat %s: %s", message.chat.id, exc)
+            self._try_reply(
+                message.chat.id,
+                "My vision is blurry right now — couldn't analyze your photo. "
+                "Please try sending it again, or type /restart to begin fresh.",
+            )
+            return
 
         if verdict.human_present:
             if self._interviewer is None:

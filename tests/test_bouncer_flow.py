@@ -139,6 +139,12 @@ def test_two_chats_do_not_share_session_state() -> None:
 
 # --- graceful degradation on the conversation path (plan 5.3) --------------
 
+# Vision failure message (specific to Bouncer vision API errors)
+VISION_FAILURE_TEXT = (
+    "My vision is blurry right now — couldn't analyze your photo. "
+    "Please try sending it again, or type /restart to begin fresh."
+)
+
 
 def test_unparseable_model_output_degrades_gracefully(
     caplog: pytest.LogCaptureFixture,
@@ -149,7 +155,7 @@ def test_unparseable_model_output_degrades_gracefully(
     with caplog.at_level(logging.ERROR):
         bot.handle_update(photo_update(1, chat_id=42, file_id="person"))
 
-    assert client.sent == [(42, ERROR_TEXT)]
+    assert client.sent == [(42, VISION_FAILURE_TEXT)]
     assert state.load(42).phase is Phase.AWAITING_PHOTO
     assert any(record.levelno >= logging.ERROR for record in caplog.records)
 
@@ -165,7 +171,7 @@ def test_gemini_failure_degrades_gracefully(caplog: pytest.LogCaptureFixture) ->
     with caplog.at_level(logging.ERROR):
         bot.handle_update(photo_update(1, chat_id=42, file_id="person"))
 
-    assert client.sent == [(42, ERROR_TEXT)]
+    assert client.sent == [(42, VISION_FAILURE_TEXT)]
     assert any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
