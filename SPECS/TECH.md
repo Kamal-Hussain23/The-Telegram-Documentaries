@@ -58,9 +58,18 @@ The technical contract. Every agent and feature spec defers to this file.
   change invalidate old in-memory sessions cleanly.
 - **One shared state driver** used by every stage — no stage reads or writes
   session state directly.
-- **Reset semantics:** `/start` and `/restart` both purge the session entry and
-  any temporary media on disk, then re-enter the initial phase. Neither
-  restarts the process.
+- **Reset semantics:** `/start` and `/restart` both invoke an explicit reset
+  routine that, for the requesting `chat_id`, performs three actions in order:
+  1. **Cancel Active Sessions** — terminate any running interview loops or
+     waiting states and replace the session entry with a fresh
+     ``SessionState`` at ``AWAITING_PHOTO``.
+  2. **Purge Ephemeral Assets** — delete temporary media on disk: narrator
+     voice notes (`narration_<chat_id>_*`), cached original photos
+     (`photo_<chat_id>_*`), and converted hybrids (`converted_<chat_id>_*`).
+  3. **Re-initialize Agent Memory** — clear conversation history buffers (dossier,
+     profile, suggested_animal, script) and reset state trackers back to the
+     greeting stage.
+  Neither `/start` nor `/restart` restarts the Python process.
 
 ## Testing
 

@@ -10,10 +10,10 @@ rejection path is unchanged.
 Phase 6 (ROADMAP.md) adds the Narrator: when the Scripter advances the chat to
 ``NARRATING``, the Narrator synthesises the script to audio and delivers it as
 a Telegram voice note in the same turn; a failed narration stays in
-``NARRATING`` so any text retries it. Phase 6 also amends the Converter's
-failure path: a failed hybrid portrait no longer parks the chat in
-``CONVERTING`` — the chat advances to ``SCRIPTING`` so the narration still
-happens without the portrait. Text in every other phase keeps the Phase 1 reply.
+``NARRATING`` so any text retries it. Phase 6 also amends the pipeline: the
+chat advances from ``INTERVIEWING`` directly to ``SCRIPTING``, skipping the
+Converter stage entirely. Text in every other phase keeps the Phase 1 reply; the
+rejection path is unchanged.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from typing import Protocol
 
 from telegram_documentaries.bouncer import REJECTION_TEXT, Bouncer
 from telegram_documentaries.client import validate_image
-from telegram_documentaries.converter import CONVERTER_FAILURE_TEXT, Converter
 from telegram_documentaries.interviewer import Interviewer
 from telegram_documentaries.logutil import describe_message
 from telegram_documentaries.models import Message, PhotoSize, Update
@@ -84,7 +83,6 @@ class Bot:
         bouncer: Bouncer | None = None,
         state: StateDriver | None = None,
         interviewer: Interviewer | None = None,
-        converter: Converter | None = None,
         scripter: Scripter | None = None,
         narrator: Narrator | None = None,
     ) -> None:
@@ -92,7 +90,6 @@ class Bot:
         self._bouncer = bouncer
         self._state = state
         self._interviewer = interviewer
-        self._converter = converter
         self._scripter = scripter
         self._narrator = narrator
 
@@ -156,19 +153,15 @@ class Bot:
                 reply = self._interviewer.answer(message.chat.id, text)
                 self._reply(message.chat.id, reply)
                 # If the interview just completed, run the rest of the pipeline
-                # immediately in the same turn: the Converter, then the
-                # Scripter, then the Narrator. Each stage advances the phase on
-                # success, so the nested checks only fire for the next stage —
-                # a failed stage keeps its phase and is retried by a later text.
+                # immediately in the same turn: the Scripter, then the Narrator.
+                # The Converter stage has been removed, so the chat advances
+                # directly from INTERVIEWING to SCRIPTING.
                 session = self._state.load(message.chat.id)
-                if session.phase is Phase.CONVERTING and self._converter is not None:
-                    self._run_converter(message.chat.id)
+                if session.phase is Phase.SCRIPTING and self._scripter is not None:
+                    self._run_scripter(message.chat.id)
                     session = self._state.load(message.chat.id)
-                    if session.phase is Phase.SCRIPTING and self._scripter is not None:
-                        self._run_scripter(message.chat.id)
-                        session = self._state.load(message.chat.id)
-                        if session.phase is Phase.NARRATING and self._narrator is not None:
-                            self._run_narrator(message.chat.id)
+                    if session.phase is Phase.NARRATING and self._narrator is not None:
+                        self._run_narrator(message.chat.id)
                 return
         # A chat left in SCRIPTING by a failed Scripter run: any text is a
         # retry. Commands (/start, /restart) are handled above, so this branch
@@ -201,32 +194,6 @@ class Bot:
     def _reply(self, chat_id: int, text: str) -> None:
         self._client.send_message(chat_id=chat_id, text=text)
         logger.info("replied chat_id=%s text=%r", chat_id, text)
-
-    def _run_converter(self, chat_id: int) -> None:
-        """Run the Converter for a chat in CONVERTING phase.
-
-        On success: deliver the hybrid portrait and advance to SCRIPTING.
-        On failure (model error or send failure): reply in-character and
-        advance to SCRIPTING anyway, so the Scripter/Narrator still run without
-        a hybrid portrait (Phase 6 amendment — see the Converter spec).
-        """
-        if self._converter is None or self._state is None:
-            return
-        try:
-            output = self._converter.convert(chat_id)
-            # Deliver the hybrid portrait directly — no intermediate text hop.
-            self._client.send_photo(chat_id, output.image_bytes)
-            logger.info("delivered hybrid portrait to chat_id=%s", chat_id)
-        except Exception:
-            # Graceful degradation: log loudly, friendly in-character reply,
-            # advance to SCRIPTING so the scripter can run even without the
-            # hybrid portrait. The user is notified the portrait could not be
-            # generated, but the narration proceeds from the dossier.
-            logger.exception("converter failed for chat %s", chat_id)
-            session = self._state.load(chat_id)
-            session.phase = Phase.SCRIPTING
-            self._state.save(session)
-            self._try_reply(chat_id, CONVERTER_FAILURE_TEXT)
 
     def _run_scripter(self, chat_id: int) -> None:
         """Run the Scripter for a chat in SCRIPTING phase.

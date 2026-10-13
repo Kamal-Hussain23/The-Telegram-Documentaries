@@ -2,8 +2,8 @@
 
 Reference: SPECS/2026-10-11-narrator/requirements.md acceptance criteria,
 plan.md groups 5.1–5.2 and 6.5, validation.md check 5. Everything runs offline
-against the scripted TTS client; the full pipeline (photo → interview →
-converter → scripter → narrator) is exercised through the Bot.
+against the scripted TTS client; the pipeline (photo → interview → scripter →
+narrator) is exercised through the Bot.
 """
 
 from __future__ import annotations
@@ -11,9 +11,8 @@ from __future__ import annotations
 import logging
 
 import pytest
-from telegram_documentaries.bot import CONVERTER_FAILURE_TEXT, REPLY_TEXT, Bot
+from telegram_documentaries.bot import REPLY_TEXT, Bot
 from telegram_documentaries.bouncer import Bouncer
-from telegram_documentaries.converter import Converter
 from telegram_documentaries.interviewer import Interviewer
 from telegram_documentaries.narrator import NARRATOR_FAILURE_TEXT, Narrator, NarratorResult
 from telegram_documentaries.scripter import Scripter
@@ -21,12 +20,10 @@ from telegram_documentaries.state import Phase, StateDriver
 from tests.support.fakes import (
     STUB_OGG,
     FakeTelegramClient,
-    StubConverterClient,
     StubInterviewClient,
     StubScripterClient,
     StubTTSClient,
     StubVisionClient,
-    converter_output_json,
     fixture_bytes,
     photo_update,
     profile_json,
@@ -38,7 +35,7 @@ from tests.support.fakes import (
 
 PERSON = fixture_bytes("person.jpg")
 OTHER_PERSON = fixture_bytes("landscape.jpg")
-HYBRID = fixture_bytes("landscape.jpg")  # reuse as the "generated" hybrid
+STUB_OGG_TWO = b"OggS" + b"B" * 64
 
 Q1 = "What do you do when nobody is watching?"
 Q2 = "Describe the strangest thing in your refrigerator."
@@ -73,7 +70,6 @@ def wired_bot(
     client: FakeTelegramClient,
     state: StateDriver,
     interview_stub: StubInterviewClient,
-    converter_stub: StubConverterClient,
     scripter_stub: StubScripterClient,
     tts_stub: StubTTSClient,
     vision: StubVisionClient,
@@ -87,7 +83,6 @@ def wired_bot(
             bouncer=Bouncer(vision),
             state=state,
             interviewer=Interviewer(state, interview_stub),
-            converter=Converter(state, converter_stub),
             scripter=Scripter(state, scripter_stub),
             narrator=Narrator(state, tts_stub, client),
         )
@@ -96,7 +91,6 @@ def wired_bot(
         bouncer=Bouncer(vision),
         state=state,
         interviewer=Interviewer(state, interview_stub),
-        converter=Converter(state, converter_stub),
         scripter=Scripter(state, scripter_stub),
     )
 
@@ -113,14 +107,12 @@ def make_bot(
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
-    converter_stub = StubConverterClient([converter_output_json(HYBRID)])
     scripter_stub = StubScripterClient([scripter_output_json(SCRIPT)])
     tts_stub = StubTTSClient(tts_responses)
     bot = wired_bot(
         client,
         state,
         interview_stub,
-        converter_stub,
         scripter_stub,
         tts_stub,
         vision,
@@ -141,7 +133,7 @@ def run_flow(
     start_id: int = 1,
     file_id: str = "person",
 ) -> None:
-    """Drive the full photo → interview → converter → scripter → narrator flow."""
+    """Drive the photo → interview → scripter → narrator flow."""
     bot.handle_update(photo_update(start_id, chat_id=chat_id, file_id=file_id))
     bot.handle_update(text_update(start_id + 1, chat_id=chat_id, text="answer one"))
     bot.handle_update(text_update(start_id + 2, chat_id=chat_id, text="answer two"))
@@ -152,7 +144,7 @@ def run_flow(
 
 
 def test_full_flow_delivers_a_voice_note_and_completes_the_pipeline() -> None:
-    """Photo → interview → image → narration → voice note, all in one turn."""
+    """Photo → interview → script → narration → voice note, all in one turn."""
     client = client_with_people()
     bot, state, tts_stub = make_bot(
         client, tts_responses=[NarratorResult(audio_bytes=STUB_OGG, format="ogg")]
@@ -188,34 +180,7 @@ def test_voice_note_arrives_in_the_same_turn_as_the_text_script() -> None:
     assert len(client.sent_voices) == 1
 
 
-# --- converter failure: narration still happens (Phase 6 amendment) ----------
-
-
-def test_converter_failure_still_narrates_without_a_hybrid_portrait() -> None:
-    """A failed Converter skips the portrait but the voice note is still sent."""
-    client = client_with_people()
-    state = StateDriver()
-    vision = StubVisionClient([verdict_json(True)])
-    interview_stub = StubInterviewClient(
-        questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
-    )
-    converter_stub = StubConverterClient([RuntimeError("image model is down")])
-    scripter_stub = StubScripterClient([scripter_output_json(SCRIPT)])
-    tts_stub = StubTTSClient([NarratorResult(audio_bytes=STUB_OGG, format="ogg")])
-    bot = wired_bot(client, state, interview_stub, converter_stub, scripter_stub, tts_stub, vision)
-
-    run_flow(bot, client)
-
-    # No hybrid portrait, but the failure is announced and narration proceeds.
-    assert client.sent_photos == []
-    assert (42, CONVERTER_FAILURE_TEXT) in client.sent
-    assert (42, SCRIPT) in client.sent
-    assert tts_stub.synthesize_calls == [SCRIPT]
-    assert len(client.sent_voices) == 1
-    assert state.load(42).phase is Phase.AWAITING_PHOTO
-
-
-# --- failure and retry (plan 6.5, validation 5.2) ----------------------------
+# --- failure and retry (plan 6.5, validation 5.2) ---------------------------
 
 
 def test_narrator_failure_stays_in_narrating_and_retries_via_public_path(
@@ -287,9 +252,6 @@ def test_two_chats_each_get_their_own_voice_notes() -> None:
         questions=three_questions() * 2,
         profiles=[profile_json(PROFILE, ANIMAL), profile_json("A different profile", "badger")],
     )
-    converter_stub = StubConverterClient(
-        [converter_output_json(HYBRID), converter_output_json(OTHER_PERSON)]
-    )
     scripter_stub = StubScripterClient(
         [scripter_output_json(SCRIPT), scripter_output_json(SCRIPT_TWO)]
     )
@@ -303,7 +265,6 @@ def test_two_chats_each_get_their_own_voice_notes() -> None:
         client,
         state,
         interview_stub,
-        converter_stub,
         scripter_stub,
         tts_stub,
         vision,

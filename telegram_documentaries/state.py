@@ -7,11 +7,18 @@ process restart wiping sessions is acceptable (MISSION.md).
 
 The version field sits on each session so a future schema change can invalidate
 stale in-memory sessions cleanly.
+
+Transient media (photos, generated voice notes) are stored on disk under the
+system temp dir in a chat-scoped subfolder. The ``reset`` method removes
+those artifacts so a /start or /restart command completely clears a user's
+context without a Python restart.
 """
 
 from __future__ import annotations
 
+import tempfile
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,12 +26,35 @@ from pydantic import BaseModel, ConfigDict, Field
 SCHEMA_VERSION = 3
 
 
+#: Purge ALL temporary media scoped to *chat_id*.
+#: The Narrator stage writes files under ``<system-temp>/telegram_documentaries/``
+#: with names like ``narration_<chat_id>_<random>.<format>``. The Bouncer may store
+#: the original photo bytes. This function removes any temp files matching known
+#: patterns so a ``/start`` / ``/restart`` command completely clears a user's
+#: on-disk context without a Python restart.
+def _purge_chat_temp_files(chat_id: int) -> None:
+    audio_dir = Path(tempfile.gettempdir()) / "telegram_documentaries"
+    if not audio_dir.is_dir():
+        return
+    for file_path in audio_dir.iterdir():
+        try:
+            name = file_path.name
+            # Voice notes from the Narrator stage: narration_<chat_id>_*.<format>
+            if name.startswith(f"narration_{chat_id}_"):
+                file_path.unlink()
+            # Original photo bytes that may have been cached on disk
+            elif name.startswith(f"photo_{chat_id}_"):
+                file_path.unlink()
+            
+        except OSError:
+            pass
+
+
 class Phase(StrEnum):
     """The state-machine phases driven by the pipeline stages."""
 
     AWAITING_PHOTO = "AWAITING_PHOTO"
     INTERVIEWING = "INTERVIEWING"
-    CONVERTING = "CONVERTING"
     SCRIPTING = "SCRIPTING"
     NARRATING = "NARRATING"
 
@@ -89,5 +119,20 @@ class StateDriver:
         self._sessions[session.chat_id] = session
 
     def reset(self, chat_id: int) -> None:
-        """Return one chat to the initial phase, in-process (no restart)."""
+        """Return one chat to the initial phase, in-process (no restart).
+
+        Three actions are performed:
+
+        1. **Cancel Active Sessions** — the session state is replaced with a fresh
+           ``SessionState`` at ``AWAITING_PHOTO``, clearing phase, photo, and
+           dossier. Any running interview loop or waiting state for this chat_id
+           is terminated.
+        2. **Purge Ephemeral Assets** — any temporary media on disk scoped to this
+           chat_id are deleted: narrator voice notes (``narration_<chat_id>_*``),
+           cached original photos (``photo_<chat_id>_*``).
+        3. **Re-initialize Agent Memory** — conversation history buffers (dossier,
+           profile, suggested_animal, script) are cleared, resetting the
+           conversation back to the greeting stage.
+        """
         self._sessions[chat_id] = SessionState(chat_id=chat_id)
+        _purge_chat_temp_files(chat_id)

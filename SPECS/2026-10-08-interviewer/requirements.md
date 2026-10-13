@@ -52,8 +52,18 @@ Decided with the user on 2026-10-08:
 5. **Resume:** state is keyed by `chat_id`, so the interview continues
    correctly across separate Telegram messages and survives concurrent
    interviews in different chats.
-6. **Reset:** mid-interview `/start` or `/restart` clears the dossier and
-   restarts cleanly, in-process.
+6. **Reset:** mid-interview `/start` or `/restart` invokes the explicit reset
+   routine that performs three actions for the requesting `chat_id`:
+   1. **Cancel Active Sessions** — terminate any running interview loops or
+      waiting states and replace the session with a fresh ``SessionState`` at
+      ``AWAITING_PHOTO``.
+   2. **Purge Ephemeral Assets** — delete temporary media on disk: narrator
+      voice notes (`narration_<chat_id>_*`), cached original photos
+      (`photo_<chat_id>_*`), and converted hybrids (`converted_<chat_id>_*`).
+   3. **Re-initialize Agent Memory** — clear conversation history buffers (dossier,
+      profile, suggested_animal, script) and reset state trackers back to the
+      greeting stage.
+   The chat then begins a fresh interview from the photo stage.
 
 ## Scope
 

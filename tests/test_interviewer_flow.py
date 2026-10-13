@@ -243,7 +243,7 @@ def test_interview_resumes_from_the_driver_across_separate_messages() -> None:
     assert ANIMAL in client.sent[-1][1]
 
     session = state.load(42)
-    assert session.phase is Phase.CONVERTING
+    assert session.phase is Phase.SCRIPTING
     assert session.dossier.questions == [Q1, Q2, Q3]
     assert session.dossier.answers == ["answer one", "answer two", "answer three"]
 
@@ -294,7 +294,7 @@ def test_final_answer_persists_the_profile_and_reaches_converting() -> None:
     bot.handle_update(text_update(4, chat_id=42, text="answer three"))
 
     session = state.load(42)
-    assert session.phase is Phase.CONVERTING
+    assert session.phase is Phase.SCRIPTING
     assert session.dossier.profile == PROFILE
     assert session.dossier.suggested_animal == ANIMAL
     # Budget floor: exactly three questions, no fourth generation call.
@@ -344,7 +344,7 @@ def test_text_after_completion_leaves_the_finished_dossier_alone() -> None:
     assert len(stub.question_calls) == 3
     assert len(stub.profile_calls) == 1
     session = state.load(42)
-    assert session.phase is Phase.CONVERTING
+    assert session.phase is Phase.SCRIPTING
     assert session.dossier.profile == PROFILE
     assert session.dossier.suggested_animal == ANIMAL
 
@@ -426,7 +426,7 @@ def test_over_curious_model_is_stopped_at_question_four() -> None:
     assert ANIMAL in client.sent[-1][1]
     assert len(client.sent) == 5  # four questions plus one reveal.
     session = state.load(42)
-    assert session.phase is Phase.CONVERTING
+    assert session.phase is Phase.SCRIPTING
     assert session.dossier.profile == PROFILE
 
 
@@ -568,8 +568,8 @@ def test_each_chat_is_revealed_its_own_animal_not_the_other_s() -> None:
 
     chat_one = state.load(1)
     chat_two = state.load(2)
-    assert chat_one.phase is Phase.CONVERTING
-    assert chat_two.phase is Phase.CONVERTING
+    assert chat_one.phase is Phase.SCRIPTING
+    assert chat_two.phase is Phase.SCRIPTING
     assert chat_one.dossier.profile == profile_one
     assert chat_one.dossier.suggested_animal == "macaque"
     assert chat_two.dossier.profile == profile_two
@@ -614,7 +614,7 @@ def test_gemini_failure_degrades_gracefully_and_stays_resumable(
     assert client.sent[-1] == (42, Q3)
     bot.handle_update(text_update(5, chat_id=42, text="answer four"))
     assert ANIMAL in client.sent[-1][1]
-    assert state.load(42).phase is Phase.CONVERTING
+    assert state.load(42).phase is Phase.SCRIPTING
     assert len(stub.profile_calls) == 1
 
 
@@ -650,7 +650,7 @@ def test_malformed_model_output_degrades_gracefully_and_stays_resumable(
     assert client.sent[-1] == (42, Q3)
     bot.handle_update(text_update(5, chat_id=42, text="answer four"))
     assert ANIMAL in client.sent[-1][1]
-    assert state.load(42).phase is Phase.CONVERTING
+    assert state.load(42).phase is Phase.SCRIPTING
     assert len(stub.profile_calls) == 1
 
 
