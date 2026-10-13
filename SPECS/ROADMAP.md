@@ -89,8 +89,17 @@ TTS synthesis and audio delivery.
 Reset semantics, wrong-payload guards, and API-timeout fallbacks.
 
 **Acceptance criteria**
-- `/start` and `/restart` purge session state **and** temporary media without
-  restarting the process.
+- `/start` and `/restart` invoke an explicit reset routine that, for the
+  requesting `chat_id`, performs three actions in order:
+  1. **Cancel Active Sessions** — terminate any running interview loops or
+     waiting states and replace the session with a fresh ``SessionState`` at
+     ``AWAITING_PHOTO``.
+  2. **Purge Ephemeral Assets** — delete temporary media on disk: narrator
+     voice notes (`narration_<chat_id>_*`), cached original photos
+     (`photo_<chat_id>_*`), and converted hybrids (`converted_<chat_id>_*`).
+  3. **Re-initialize Agent Memory** — clear conversation history buffers (dossier,
+     profile, suggested_animal, script) and reset state trackers back to the
+     greeting stage.
 - Text during the photo stage, a second photo during the interview, and other
   out-of-order payloads each produce a friendly in-character reply — no crash,
   no traceback, no silent drop.

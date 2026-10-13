@@ -95,44 +95,6 @@ class StubInterviewClient:
         return item
 
 
-def converter_output_json(
-    image_bytes: bytes | str, confidence: float = 0.95, reason: str = "hybrid portrait generated"
-) -> str:
-    """A raw ``ConverterOutput`` payload exactly as the model would emit it."""
-    import base64
-
-    if isinstance(image_bytes, bytes):
-        image_b64 = base64.b64encode(image_bytes).decode("ascii")
-    else:
-        image_b64 = image_bytes
-    return json.dumps({"image_bytes": image_b64, "confidence": confidence, "reason": reason})
-
-
-class StubConverterClient:
-    """Scripted Gemini converter client: queues raw structured outputs.
-
-    Structurally implements the real client's ``ConverterClient`` protocol —
-    ``convert`` returns raw JSON for the Converter to parse at the edge — but
-    never touches the network. Every call records the inputs it was handed,
-    and any scripted entry may be an exception instance to simulate Gemini
-    failing mid-conversion.
-    """
-
-    def __init__(self, responses: list[str | BaseException] | None = None) -> None:
-        self._responses = list(responses or [])
-        #: The (image_bytes, dossier_context) of every convert call, in order.
-        self.convert_calls: list[tuple[bytes, str]] = []
-
-    def convert(self, image: bytes, dossier_context: str) -> str:
-        self.convert_calls.append((image, dossier_context))
-        if not self._responses:
-            raise AssertionError("StubConverterClient ran out of scripted responses")
-        item = self._responses.pop(0)
-        if isinstance(item, BaseException):
-            raise item
-        return item
-
-
 def scripter_output_json(script: str) -> str:
     """A raw ``ScripterOutput`` payload exactly as the model would emit it."""
     return json.dumps({"script": script})

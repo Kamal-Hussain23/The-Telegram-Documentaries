@@ -144,9 +144,10 @@ def _reveal_reply(suggested_animal: str) -> str:
 
 
 class Interviewer:
-    """Owns the interview turn loop and the ``INTERVIEWING → CONVERTING`` transition."""
+    """Owns the interview turn loop and advances INTERVIEWING → SCRIPTING directly."""
 
     def __init__(self, state: StateDriver, client: InterviewClient) -> None:
+        # Converter stage removed; chat advances INTERVIEWING → SCRIPTING directly
         self._state = state
         self._client = client
 
@@ -167,8 +168,6 @@ class Interviewer:
             # No question pending: a previous turn failed mid-flight. Carry on
             # from the dossier instead of letting a photo wipe it.
             return self._advance(session)
-        if session.phase is Phase.CONVERTING and session.dossier.suggested_animal:
-            return _reveal_reply(session.dossier.suggested_animal)
 
         session.phase = Phase.INTERVIEWING
         session.photo = photo
@@ -210,6 +209,6 @@ class Interviewer:
         parsed = parse_profile(self._client.synthesize_profile(dossier_context(dossier)))
         dossier.profile = parsed.profile
         dossier.suggested_animal = parsed.suggested_animal
-        session.phase = Phase.CONVERTING
+        session.phase = Phase.SCRIPTING
         self._state.save(session)
         return _reveal_reply(parsed.suggested_animal)

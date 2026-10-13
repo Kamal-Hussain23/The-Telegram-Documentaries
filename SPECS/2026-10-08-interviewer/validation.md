@@ -29,11 +29,15 @@ checks, then the gate.
   (`INTERVIEWING → CONVERTING`) are made by the Interviewer through the
   injected `StateDriver`; `bot.py` only routes and delegates, and no stage
   touches session state outside the driver.
-- [ ] **(e) Mid-interview `/start` and `/restart` restart cleanly.** From an
-  in-progress interview with a populated dossier and stored photo: each
-  command leaves the chat at `AWAITING_PHOTO` with dossier and photo purged,
-  in-process, and a subsequent photo begins a fresh interview whose questions
-  and answers contain nothing from the old one.
+- [ ] **(e) Mid-interview `/start` and `/restart` invoke the explicit reset
+   routine.** From an in-progress interview with a populated dossier and stored
+   photo: each command leaves the chat at `AWAITING_PHOTO` with all conversation
+   history buffers (dossier, profile, suggested_animal, script) cleared, state
+   trackers reset to the greeting stage, and all temporary media on disk
+   (voice notes ``narration_<chat_id>_*``, cached original photos
+   ``photo_<chat_id>_*``, converted hybrids ``converted_<chat_id>_*``) deleted.
+   A subsequent photo begins a fresh interview whose questions and answers
+   contain nothing from the old one.
 - [ ] **(f) `scripts/test` green:** pytest + ruff + mypy all pass.
 
 ## 2. Required tests — precise strategy
@@ -50,8 +54,9 @@ checks, then the gate.
 - [ ] **Completion/handoff test exists and passes:** final answer → profile +
   animal persisted → phase `CONVERTING` → reply reveals the animal and does
   **not** leak the full profile text. (Plan 1.5.)
-- [ ] **Reset and isolation tests exist and pass:** both commands purge and
-  restart (1.6); two `chat_id`s never share dossier, photo, or reveal (1.8).
+- [ ] **Reset and isolation tests exist and pass:** both commands invoke the
+   explicit reset routine (5.1); both commands purge and restart (1.6); two
+   `chat_id`s never share dossier, photo, or reveal (1.8).
 - [ ] **Test strategy — deterministic offline suite (ground truth).** The
   default suite run by `./scripts/test` uses the **stubbed interview client**
   (scripted structured outputs, records calls): **no network, no

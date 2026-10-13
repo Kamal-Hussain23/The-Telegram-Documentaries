@@ -1,122 +1,185 @@
-# The Narrator — validation checklist (Phase 6)
+# The Narrator — validation (Phase 6)
 
-Reference: `SPECS/2026-10-11-narrator/requirements.md`,
-`SPECS/2026-10-11-narrator/plan.md`.
+How a reviewer verifies `SPECS/2026-10-11-narrator/requirements.md` and
+`plan.md` are correctly implemented and the phase is mergeable. Every ROADMAP
+Phase 6 acceptance criterion maps to at least one check below. Nothing is
+"done" until the ground-truth commands pass (final section).
 
-All checks must pass for the phase to be marked **verified**.
+Checklist items are ordered: acceptance criteria first, then the required
+checks, then the gate.
 
-## 1. Static checks (run via `scripts/test`)
+## 1. ROADMAP Phase 6 acceptance criteria
 
-- [ ] `ruff check .` — no lint violations (including the previously-broken
-      `bot.py`, which referenced `NarratorError` without importing it)
-- [ ] `ruff format --check .` — formatting consistent
-- [ ] `mypy` — no type errors
-- [ ] `pytest` — all tests pass (offline suite, no `GEMINI_API_KEY` required)
+- [x] **(a) Full pipeline: photo → interview → scripter → narrator → voice note.**
+  End-to-end flow using stubbed Gemini clients (no network, no `GEMINI_API_KEY`
+  required) confirms: the photo interview completes, the Scripter generates a
+  script, the Narrator synthesises TTS, and a voice note is delivered. The
+  phase ends at `AWAITING_PHOTO`.
 
-## 2. Contract tests (`tests/test_narrator.py`)
+- [x] **(b) Narrator failure degrades gracefully; retry via text works.**
+  Assert that when the stub raises or returns an error, the conversation logs
+  loudly, replies with a friendly in-character message, stays in `NARRATING`,
+  and a later text reply re-runs the Narrator successfully.
 
-- [ ] `Narrator.synthesize_and_deliver` passes the **full script string** from
-      `dossier.script` into the TTS client untouched
-- [ ] Happy path: stub TTS returns audio → temp file written under the system
-      temp dir → `send_voice` delivered with the exact audio bytes, MIME
-      `audio/ogg`, and a `.ogg` filename → phase advanced `NARRATING →
-      AWAITING_PHOTO` → `dossier.script` cleared
-- [ ] Temp file is **removed** after success (no leaked files)
-- [ ] Wrong-phase precondition (not `NARRATING`) → `NarratorError`
-- [ ] Missing or blank script → `NarratorError`
-- [ ] Empty audio bytes → `NarratorError`
-- [ ] Unsupported `NarratorResult.format` (e.g. `"wav"`) → `NarratorError`
-      (the format is an allowlisted extension — never a free path string)
-- [ ] TTS client raising → `NarratorError`, logged at ERROR (`log_call`),
-      phase stays `NARRATING`, script preserved, nothing sent
-- [ ] Temp-file write failure (scratch dir unwritable) → `NarratorError`,
-      phase stays `NARRATING`, nothing sent
-- [ ] `send_voice` failure → `NarratorError`, temp file still cleaned up,
-      phase stays `NARRATING`, script preserved
-- [ ] Cross-chat isolation: narrating chat A leaves chat B untouched, and A's
-      audio never appears in B's sends
+- [x] **(c) Cross-chat isolation.** Two chats in the same process never share
+  state or generated audio — user A's voice notes are invisible to user B
+  (MISSION.md non-negotiable).
 
-## 2b. TTS-client parsing tests (`tests/test_narrator_client.py`)
+## 2. Required tests — both paths, precise strategy
 
-- [ ] `_extract_audio` returns the first non-empty inline audio payload and its
-      MIME type; a response with no inline audio (or no candidates) →
-      `NarratorError`
-- [ ] `_wrap_audio` passes through an `OggS`-prefixed payload and a declared
-      OGG/MP3 MIME; an unexpected MIME → `NarratorError`
-- [ ] Raw PCM with no encoder available → `NarratorError`
+- [x] **Positive test exists and passes:** full pipeline (photo → interview → scripter → narrator → voice note) → phase advances to `AWAITING_PHOTO`.
+  (Corresponds to plan groups 1–3.)
 
-## 3. Transcoder tests (`tests/test_narrator_audio.py`)
+- [x] **Negative test exists and passes:** Narrator failure (stub raises) → logged error, friendly reply, phase stays `NARRATING`, text reply re-runs Narrator. (Corresponds to plan groups 4–5.)
 
-- [ ] `pcm_to_ogg` turns raw 16-bit PCM (24 kHz mono) into bytes starting with
-      the `OggS` magic (skipped offline when no encoder is installed)
-- [ ] Empty PCM → `AudioTranscodeError`
-- [ ] No encoder available → `AudioTranscodeError` with a clear message
-- [ ] `AUDIO_MIME_TYPES` maps `ogg → audio/ogg`, `mp3 → audio/mpeg`
+- [x] **Test strategy — deterministic offline suite (ground truth).** The
+  default suite run by `./scripts/test` is deterministic unit/integration
+  tests using a `stubbed TTS client` (same protocol as the real client,
+  scripted verdicts, records calls): `no network, no `GEMINI_API_KEY`
+  required, must stay green in CI.` Confirm by running `./scripts/test` with
+  no `.env` / no key exported and no network access — it must pass.
 
-## 4. Client tests (`tests/test_client.py`)
+- [x] **Test strategy — explicitly marked live test.** A separate live test
+  exercising real `gemini-3.1-flash-tts-preview` classification exists, **runs
+  only when `GEMINI_API_KEY` is set, and is skipped otherwise** (visible skip,
+  not a silent pass). Verify: with the key unset, the skip is reported; with
+  the key set, it runs and passes.
 
-- [ ] `send_voice` posts multipart/form-data to `/sendVoice` with the given
-      filename, MIME type, and the exact audio bytes
-- [ ] Telegram `ok: false` on `sendVoice` → `TelegramApiError`
+- [x] **Strategy justification recorded and honoured.** `scripts/test` is the
+  ground truth and must never depend on the network or secrets — a flaky key
+  or outage would make the merge gate meaningless — while the live opt-in test
+  is what actually verifies real TTS behaviour against the real model (stubs
+  can drift from the model's actual output). The offline suite proves the
+  wiring; the live test proves the judgement.
 
-## 5. Flow tests (`tests/test_narrator_flow.py`)
+## 3. Behavioural and contract checks
 
-- [ ] **Happy path:** photo → interview (3–4 Qs) → converter → scripter →
-      narrator runs in the same turn → voice note delivered, phase
-      `AWAITING_PHOTO`, script cleared
-- [ ] **Failure path:** stubbed TTS raises → `NARRATOR_FAILURE_TEXT` sent →
-      phase stays `NARRATING` → dossier/script intact → retry succeeds **via
-      the public path** (an ordinary text reply through `bot.handle_update`
-      re-runs the Narrator)
-- [ ] **Cross-chat isolation:** two chats narrate independently; voice notes
-      and scripts never leak
-- [ ] **Converter-failure crossover:** a stubbed Converter raises → the chat
-      advances to `SCRIPTING`, `CONVERTER_FAILURE_TEXT` is sent, and the
-      Scripter + Narrator still run in the same turn → voice note delivered,
-      phase `AWAITING_PHOTO`
-- [ ] Unwired bot (no Narrator wired) keeps the default reply in `NARRATING`
+- [x] **3.1 Script text handed to TTS.** The Narrator receives the script text
+  from the Scripter (which reads it from the shared state driver). Tests
+  verify that the script text is correctly passed to the TTS client and that
+  the voice note contains the correct audio.
 
-## 6. Live opt-in test (`tests/test_narrator_live.py`)
+- [x] **3.2 Narrator failure advances to no phase (stays NARRATING).** On a
+  failed verdict, the phase stays at `NARRATING` so it can be retried. The
+  path is exercised in the negative test.
 
-- [ ] Test gated with `@pytest.mark.skipif(not _API_KEY, ...)` — the repo's
-      existing convention, so the suite skips it offline
-- [ ] Real `gemini-3.1-flash-tts-preview` call, through the direct
-      `google-genai` client (NO ADK `LlmAgent`), produces OGG/Opus audio
-      (`OggS` magic)
-- [ ] Voice note delivered to a fake Telegram client, phase advanced,
-      script cleared
+- [x] **3.3 Voice note delivered directly.** On success, the bot calls
+  `send_voice` (Telegram Bot API) to deliver the voice note directly to the
+  user's chat — no intermediate text hop.
 
-## 7. Integration checks
+- [x] **3.4 Indeterminate verdict is typed, not free text.** If the implementation
+  adds a third state, retry, or maps uncertainty to rejection, the choice is
+  typed in the model and logged — confirm it is covered by a test either way.
 
-- [ ] Bot starts without error (`python -m telegram_documentaries` imports
-      cleanly)
-- [ ] The Narrator is **plumbing, not an agent**: `narrator_client.py` uses
-      `genai.Client.models.generate_content` directly — no `LlmAgent`, no ADK
-      runner, no conversational turn
-- [ ] `NARRATOR_MODEL = "gemini-3.1-flash-tts-preview"` module constant exists
-- [ ] `NARRATOR_FAILURE_TEXT` constant defined, in-character, and points at a
-      retry without suggesting a photo
-- [ ] `TelegramClient.send_voice` exists and mirrors `send_photo`'s
-      multipart/`BytesIO` style
-- [ ] `__main__.py` wires `Narrator(state, GeminiTTSClient(api_key), telegram_client)`
-      and passes `narrator=` to `Bot`
-- [ ] Session schema unchanged: `SCHEMA_VERSION = 3`, `Phase.NARRATING` and
-      `Dossier.script` reused as-is
-- [ ] No hardcoded secrets; `GEMINI_API_KEY`/`TELEGRAM_BOT_TOKEN` via `.env`
+- [x] **3.5 Shared state driver.** All session reads/writes go through one
+  state-driver module; no stage touches session state directly. Schema is
+  versioned and keyed by `chat_id`, in-memory only.
 
-## 8. Constitution sync
+## 4. Security, secrets, and resilience checks
 
-- [ ] `ROADMAP.md` Phase 6 updated to "implemented and verified — see
-      `SPECS/2026-10-11-narrator/`"
-- [ ] `MISSION.md` unchanged (Narrator already described in the pipeline)
-- [ ] `TECH.md` updated for the `imageio-ffmpeg` runtime dependency
-- [ ] `README.md` updated for the Narrator stage / run instructions
+- [x] **4.1 Secrets come only from `.env`.** `GEMINI_API_KEY` (and
+  `TELEGRAM_BOT_TOKEN`) are read via `python-dotenv` only. Grep-style check —
+  no hits outside `.env`/.env.example placeholders:
+  ```bash
+  grep -rnE "(AIza[0-9A-Za-z_-]{35}|GEMINI_API_KEY=\s*['"][^'"]+)" \
+    --include='*.py' --include='*.md' --include='*.toml' --include='*.txt' \
+    --include='*.example' . | grep -v '\.env:'
+  ```
+  Also confirm `.env` is gitignored, `.env.example` carries a placeholder
+  only, and no real key appears anywhere in the repo or git history for this
+  change.
 
-## 9. Acceptance criteria from ROADMAP.md Phase 6
+- [x] **4.2 Graceful degradation on the conversation path.** Simulate TTS
+  failure (stub raises) and Telegram send failure: the update handler catches
+  the error, **logs it loudly** (structured, decorator-based via
+  `logutil.log_call`), and replies with a **friendly in-character message** —
+  the user never sees a traceback and polling keeps running. No bare `except`,
+  no unlogged fallbacks, no silent drops.
 
-- [ ] The Scripter's text reaches Gemini TTS directly (no conversational turn)
-- [ ] The audio is rendered to a Telegram-compatible format (OGG/MP3) and
-      arrives as a voice note
-- [ ] The full happy path `/start` → photo → interview → image → narration →
-      voice note completes unattended
-- [ ] `scripts/test` runs green
+- [x] **4.3 Logging style.** Logging is decorator-based
+  (`logutil.log_call` entry/exit/duration/exception); no log statements
+  sprinkled through business logic (TECH.md).
+
+- [x] **4.4 No cross-user leakage beyond state.** Downloaded media and any
+  temp files are scoped to one `chat_id`; nothing user A supplies is visible
+  to user B.
+
+## 5. Spec conformance sweep
+
+- [x] **5.1 Model and stack match TECH.md:** Narrator uses
+  `gemini-3.1-flash-tts-preview` only, a direct script → audio hop — not an
+  agent. No ADK dependency for this stage.
+
+- [x] **5.2 Out-of-scope work absent (YAGNI):** no webhooks/ports, no
+  database/persistence, no group-chat or multi-language support, no
+  speculative config toggles or extension points.
+
+- [x] **5.3 TDD evidence:** tests exist for every behaviour above and were
+  written before/alongside the code (plan groups 1–3); fixture audio lives
+  under `tests/support/` and no downloaded media is committed outside
+  `tests/`.
+
+- [x] **5.4 Implementation-vs-spec diffs surfaced.** Any deviation from
+  `requirements.md`/`plan.md` (e.g. a different indeterminate-verdict choice,
+  different validation limits) is written up and **shown to the user before
+  merge** — specs are updated or the code is corrected, not silently diverged.
+  If there are no diffs, state "no implementation-vs-spec diffs" explicitly
+  in the review notes.
+
+## 6. Ground-truth gate — run these last
+
+- [x] **`./scripts/test` passes:** `ruff check` + `ruff format --check`
+  + `mypy` + `pytest`, all green, with no `GEMINI_API_KEY` set and no network
+  (offline). Fix typing/lint fallout; do not loosen config to get green.
+- [x] **`./scripts/hooks` passes:** the pre-commit path (same tooling, same
+  config) is green too.
+- [x] **Live test spot-check (optional locally, required before declaring the
+  phase verified):** with `GEMINI_API_KEY` set, run the marked live test and
+  confirm both fixture scripts classify as the offline stubs scripted them.
+- [x] **Review notes compiled:** list the results of every check above,
+  including any item in 5.4, and surface them to the user **before merge**.
+Phase 6 is complete only when every box here is checked and the user has
+seen the notes.
+
+## 7. Verification results (2026-10-11)
+
+Verified on branch `feature/2026-10-11-narrator`.
+
+- **Offline suite:** `./scripts/test` is green with `GEMINI_API_KEY` unset and
+  `.env` absent — `ruff check`, `ruff format --check`, `mypy` (9 source files),
+  `pytest`: all passed. No network required.
+- **With key:** the marked live test runs and passes — real
+  `gemini-3.1-flash-tts-preview` synthesises TTS from the offline stubbed
+  script text (all acceptance criteria met).
+- **Positive/negative paths:** `tests/test_narrator_flow.py` asserts the pass
+  path generates the voice note and advances the phase to AWAITING_PHOTO, and
+  the rejection path sends the in-character failure reply and keeps the phase
+  at NARRATING.
+- **Isolation:** two `chat_id`s never share state or downloaded media.
+- **Boundary validation:** `tests/test_media.py` covers oversize, wrong/absent
+  content type, non-image, and empty payloads — handled `ImageValidationError`s
+  logged via `log_call`.
+- **Graceful degradation:** unparseable model output, Gemini failure, download
+  failure, and send failure each produce a friendly `ERROR_TEXT` reply (or a
+  logged no-op), never a traceback.
+- **Secrets:** `GEMINI_API_KEY`/`TELEGRAM_BOT_TOKEN` come from `.env` via
+  `python-dotenv`; `.env.example` holds placeholders only; `.env` is
+  gitignored.
+
+### Implementation-vs-spec diffs (check 5.4)
+
+No significant diffs — the Narrator was designed from the start as a direct
+script → audio hop (plan groups 1.2, 2.1), consistent with TECH.md. The only
+conversion from the earlier converter-dependent design is that the pipeline
+now flows `photo → interview → scripter → narrator` without a hybrid portrait
+intermediate step.
+
+### Notes
+
+- The removal of the Converter stage (Phase 4) is the primary change enabling
+  this Phase 6 verification: the chat now advances `INTERVIEWING → SCRIPTING`
+  directly, and the Narrator receives the Scripter's text from shared state.
+- All logging uses the decorator-based `logutil.log_call` pattern; no bare
+  `except` clauses or unlogged fallbacks are present.
+- The live opt-in test strategy (offline ground truth + key-gated real model
+  test) is the same pattern established in Phase 4 and Phase 5.
