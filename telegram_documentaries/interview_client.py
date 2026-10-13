@@ -9,6 +9,10 @@ synchronous protocol methods drive them with ``asyncio.run``; the ADK model
 caches its client per event loop, so ``GEMINI_API_KEY`` is injected via
 ``client_kwargs``. The persona lives in ``INTERVIEW_INSTRUCTION``; the per-call
 task and the accumulated Q&A travel in the message.
+
+Timeout configuration: ``DEFAULT_GEMINI_TIMEOUT = 60.0`` seconds. The
+``timeout`` parameter wraps the ADK runner drain in ``asyncio.wait_for``;
+on timeout, ``InterviewerError`` is raised.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from google.genai import types
 
 from telegram_documentaries.interviewer import (
     INTERVIEW_INSTRUCTION,
+    InterviewerError,
     InterviewProfile,
     NextQuestion,
 )
@@ -31,6 +36,9 @@ INTERVIEW_APP_NAME = "telegram_documentaries"
 QUESTION_AGENT_NAME = "questioner"
 PROFILE_AGENT_NAME = "profiler"
 INTERVIEW_USER_ID = "interviewer"
+
+#: Default timeout for Gemini API calls (seconds).
+DEFAULT_GEMINI_TIMEOUT = 60.0
 
 #: Per-call tasks (persona + accumulated Q&A arrive with the message).
 QUESTION_TASK = (
@@ -46,9 +54,12 @@ PROFILE_TASK = (
 class GeminiInterviewClient:
     """Runs the Interviewer's agents against ``gemini-3.1-flash-lite`` through ADK."""
 
-    def __init__(self, api_key: str, model: str = INTERVIEW_MODEL) -> None:
+    def __init__(
+        self, api_key: str, model: str = INTERVIEW_MODEL, timeout: float = DEFAULT_GEMINI_TIMEOUT
+    ) -> None:
         if not api_key:
             raise ValueError("GEMINI_API_KEY must not be empty")
+        self._timeout = timeout
         self._question_runner = self._build_runner(
             api_key, model, QUESTION_AGENT_NAME, NextQuestion
         )
@@ -88,16 +99,24 @@ class GeminiInterviewClient:
             # the loop: an early return cancels the ADK run mid-flight and logs
             # cancellation/context-detach tracebacks.
             final_text: str | None = None
-            async for event in runner.run_async(
-                user_id=INTERVIEW_USER_ID,
-                session_id=session.id,
-                new_message=message,
-            ):
-                if event.is_final_response() and event.content and event.content.parts:
-                    final_text = event.content.parts[0].text or ""
+
+            async def _drain() -> None:
+                nonlocal final_text
+                async for event in runner.run_async(
+                    user_id=INTERVIEW_USER_ID,
+                    session_id=session.id,
+                    new_message=message,
+                ):
+                    if event.is_final_response() and event.content and event.content.parts:
+                        final_text = event.content.parts[0].text or ""
+
+            await asyncio.wait_for(_drain(), timeout=self._timeout)
+
             if final_text is None:
                 raise RuntimeError(f"{agent_name} agent produced no final response")
             return final_text
+        except TimeoutError as exc:
+            raise InterviewerError("model timeout") from exc
         finally:
             await runner.session_service.delete_session(
                 app_name=INTERVIEW_APP_NAME,

@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 from telegram_documentaries.bot import Bot
 from telegram_documentaries.bouncer import Bouncer
 from telegram_documentaries.client import TelegramClient
+from telegram_documentaries.converter import Converter
+from telegram_documentaries.converter_client import GeminiConverterClient
 from telegram_documentaries.interview_client import GeminiInterviewClient
 from telegram_documentaries.interviewer import Interviewer
 from telegram_documentaries.logutil import configure_logging
@@ -48,6 +50,7 @@ def main() -> int:
     telegram = TelegramClient(token=token)
     state = StateDriver()
     interviewer = Interviewer(state, GeminiInterviewClient(api_key=api_key))
+    converter = Converter(state, GeminiConverterClient(api_key=api_key), telegram)
     scripter = Scripter(state, GeminiScripterClient(api_key=api_key))
     narrator = Narrator(state, GeminiTTSClient(api_key=api_key), telegram)
     try:
@@ -56,6 +59,7 @@ def main() -> int:
             bouncer=bouncer,
             state=state,
             interviewer=interviewer,
+            converter=converter,
             scripter=scripter,
             narrator=narrator,
         ).run()

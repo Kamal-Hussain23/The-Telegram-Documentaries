@@ -8,6 +8,7 @@ in groups 2–5 of each phase.
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -100,6 +101,12 @@ def scripter_output_json(script: str) -> str:
     return json.dumps({"script": script})
 
 
+def converter_output_json(image_bytes: bytes) -> str:
+    """A raw ``ConverterOutput`` payload exactly as the model would emit it."""
+    # The model returns base64-encoded image bytes in JSON
+    return json.dumps({"image_bytes": base64.b64encode(image_bytes).decode("ascii")})
+
+
 class StubScripterClient:
     """Scripted Gemini scripter client: queues raw structured outputs.
 
@@ -119,6 +126,31 @@ class StubScripterClient:
         self.generate_calls.append(dossier_context)
         if not self._responses:
             raise AssertionError("StubScripterClient ran out of scripted responses")
+        item = self._responses.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+class StubConverterClient:
+    """Scripted Gemini converter client: queues raw structured outputs.
+
+    Structurally implements the real client's ``ConverterClient`` protocol —
+    ``generate_image`` returns raw JSON for the Converter to parse at the edge
+    — but never touches the network. Every call records the photo bytes and
+    dossier context it was handed, and any scripted entry may be an exception
+    instance to simulate Gemini failing mid-conversion.
+    """
+
+    def __init__(self, responses: list[str | BaseException] | None = None) -> None:
+        self._responses = list(responses or [])
+        #: The (photo_bytes, dossier_context) of every generate_image call, in order.
+        self.generate_calls: list[tuple[bytes, str]] = []
+
+    def generate_image(self, photo_bytes: bytes, dossier_context: str) -> str:
+        self.generate_calls.append((photo_bytes, dossier_context))
+        if not self._responses:
+            raise AssertionError("StubConverterClient ran out of scripted responses")
         item = self._responses.pop(0)
         if isinstance(item, BaseException):
             raise item

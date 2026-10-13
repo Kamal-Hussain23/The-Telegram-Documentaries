@@ -56,6 +56,8 @@ Multimodal fusion of the original photo and the dossier into a hybrid portrait.
 - Failure to generate the image produces a logged, graceful user-facing message
   rather than a dead end.
 
+**Status:** implemented and verified — see `SPECS/2026-10-13-converter/`.
+
 **Serves:** image output.
 
 ## Phase 5 — Scripter
@@ -106,5 +108,7 @@ Reset semantics, wrong-payload guards, and API-timeout fallbacks.
 - Gemini/Telegram timeouts and errors on the conversation path are caught,
   logged loudly, and degrade gracefully.
 - Logging is decorator-based and structured across all stages.
+
+**Status:** implemented and verified — see `SPECS/2026-10-13-resilience/`.
 
 **Serves:** rubric robustness.

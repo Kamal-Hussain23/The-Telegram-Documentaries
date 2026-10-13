@@ -50,7 +50,7 @@ def test_live_interview_runs_three_to_four_questions_and_completes() -> None:
 
     session = state.load(42)
     dossier = session.dossier
-    assert session.phase is Phase.SCRIPTING
+    assert session.phase is Phase.CONVERTING
     assert MIN_QUESTIONS <= len(dossier.questions) <= MAX_QUESTIONS
     assert dossier.profile and dossier.profile.strip()
     assert dossier.suggested_animal and dossier.suggested_animal.strip()

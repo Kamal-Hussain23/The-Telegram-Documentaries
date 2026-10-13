@@ -1,4 +1,4 @@
-"""The Scripter flow: complete dossier → narration → NARRATING.
+"""The Scripter flow: complete dossier → Converter → narration → NARRATING.
 
 Reference: SPECS/2026-10-10-scripter/requirements.md acceptance criteria,
 plan.md groups 1.3–4.3, validation.md checks 3. Everything here runs offline
@@ -12,6 +12,7 @@ import logging
 import pytest
 from telegram_documentaries.bot import Bot
 from telegram_documentaries.bouncer import Bouncer
+from telegram_documentaries.converter import Converter
 from telegram_documentaries.interviewer import Interviewer
 from telegram_documentaries.scripter import (
     MAX_SCRIPT_WORDS,
@@ -22,9 +23,11 @@ from telegram_documentaries.scripter import (
 from telegram_documentaries.state import Phase, StateDriver
 from tests.support.fakes import (
     FakeTelegramClient,
+    StubConverterClient,
     StubInterviewClient,
     StubScripterClient,
     StubVisionClient,
+    converter_output_json,
     fixture_bytes,
     photo_update,
     profile_json,
@@ -65,15 +68,17 @@ def wired_bot(
     client: FakeTelegramClient,
     state: StateDriver,
     interview_stub: StubInterviewClient,
+    converter_stub: StubConverterClient,
     scripter_stub: StubScripterClient,
     vision: StubVisionClient,
 ) -> Bot:
-    """A Bot wired with the Interviewer and Scripter on shared state."""
+    """A Bot wired with the Interviewer, Converter, and Scripter on shared state."""
     return Bot(
         client,
         bouncer=Bouncer(vision),
         state=state,
         interviewer=Interviewer(state, interview_stub),
+        converter=Converter(state, converter_stub, client),
         scripter=Scripter(state, scripter_stub),
     )
 
@@ -81,13 +86,14 @@ def wired_bot(
 def make_bot(
     client: FakeTelegramClient,
     interview_stub: StubInterviewClient,
+    converter_stub: StubConverterClient,
     scripter_stub: StubScripterClient,
     *,
     verdicts: list[str] | None = None,
 ) -> tuple[Bot, StateDriver]:
     state = StateDriver()
     vision = StubVisionClient(verdicts if verdicts is not None else [verdict_json(True)])
-    return wired_bot(client, state, interview_stub, scripter_stub, vision), state
+    return wired_bot(client, state, interview_stub, converter_stub, scripter_stub, vision), state
 
 
 def client_with_person() -> FakeTelegramClient:
@@ -102,7 +108,7 @@ def run_flow(
     start_id: int = 1,
     file_id: str = "person",
 ) -> None:
-    """Drive the photo → interview → scripter pipeline once."""
+    """Drive the photo → interview → converter → scripter pipeline once."""
     bot.handle_update(photo_update(start_id, chat_id=chat_id, file_id=file_id))
     bot.handle_update(text_update(start_id + 1, chat_id=chat_id, text="answer one"))
     bot.handle_update(text_update(start_id + 2, chat_id=chat_id, text="answer two"))
@@ -118,12 +124,13 @@ def test_full_flow_delivers_script_persists_it_and_advances_to_narrating() -> No
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
+    converter_stub = StubConverterClient([converter_output_json(b"fake-hybrid-image")])
     scripter_stub = StubScripterClient([scripter_output_json(SCRIPT)])
-    bot, state = make_bot(client, interview_stub, scripter_stub)
+    bot, state = make_bot(client, interview_stub, converter_stub, scripter_stub)
 
     run_flow(bot, client)
 
-    # The script is delivered as text (no hybrid portrait since converter is removed).
+    # The script is delivered as text after the converter sends the hybrid image.
     assert client.sent[-1] == (42, SCRIPT)
 
     session = state.load(42)
@@ -141,8 +148,9 @@ def test_delivery_logs_a_preview_of_the_raw_script(
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
+    converter_stub = StubConverterClient([converter_output_json(b"fake-hybrid-image")])
     scripter_stub = StubScripterClient([scripter_output_json(SCRIPT)])
-    bot, _ = make_bot(client, interview_stub, scripter_stub)
+    bot, _ = make_bot(client, interview_stub, converter_stub, scripter_stub)
 
     with caplog.at_level(logging.INFO, logger="telegram_documentaries.bot"):
         run_flow(bot, client)
@@ -160,8 +168,9 @@ def test_delivered_script_meets_the_output_contract() -> None:
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
+    converter_stub = StubConverterClient([converter_output_json(b"fake-hybrid-image")])
     scripter_stub = StubScripterClient([scripter_output_json(SCRIPT)])
-    bot, _ = make_bot(client, interview_stub, scripter_stub)
+    bot, _ = make_bot(client, interview_stub, converter_stub, scripter_stub)
 
     run_flow(bot, client)
 
@@ -177,8 +186,9 @@ def test_scripter_receives_the_complete_dossier_context() -> None:
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
+    converter_stub = StubConverterClient([converter_output_json(b"fake-hybrid-image")])
     scripter_stub = StubScripterClient([scripter_output_json(SCRIPT)])
-    bot, _ = make_bot(client, interview_stub, scripter_stub)
+    bot, _ = make_bot(client, interview_stub, converter_stub, scripter_stub)
 
     run_flow(bot, client)
 
@@ -201,8 +211,9 @@ def test_scripter_failure_stays_in_scripting_and_degrades_gracefully(
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
+    converter_stub = StubConverterClient([converter_output_json(b"fake-hybrid-image")])
     scripter_stub = StubScripterClient([RuntimeError("gemini exploded")])
-    bot, state = make_bot(client, interview_stub, scripter_stub)
+    bot, state = make_bot(client, interview_stub, converter_stub, scripter_stub)
 
     with caplog.at_level(logging.ERROR):
         run_flow(bot, client)
@@ -226,8 +237,9 @@ def test_scripter_malformed_output_stays_in_scripting(
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
+    converter_stub = StubConverterClient([converter_output_json(b"fake-hybrid-image")])
     scripter_stub = StubScripterClient(["Here is your script: a raccoon!"])
-    bot, state = make_bot(client, interview_stub, scripter_stub)
+    bot, state = make_bot(client, interview_stub, converter_stub, scripter_stub)
 
     with caplog.at_level(logging.ERROR):
         run_flow(bot, client)
@@ -243,10 +255,11 @@ def test_scripter_retry_after_failure_succeeds() -> None:
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
+    converter_stub = StubConverterClient([converter_output_json(b"fake-hybrid-image")])
     scripter_stub = StubScripterClient(
         [RuntimeError("first attempt failed"), scripter_output_json(SCRIPT)]
     )
-    bot, state = make_bot(client, interview_stub, scripter_stub)
+    bot, state = make_bot(client, interview_stub, converter_stub, scripter_stub)
 
     run_flow(bot, client)
     assert state.load(42).phase is Phase.SCRIPTING
@@ -267,10 +280,11 @@ def test_replying_text_after_failure_reruns_scripter_via_public_path() -> None:
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
+    converter_stub = StubConverterClient([converter_output_json(b"fake-hybrid-image")])
     scripter_stub = StubScripterClient(
         [RuntimeError("first attempt failed"), scripter_output_json(SCRIPT)]
     )
-    bot, state = make_bot(client, interview_stub, scripter_stub)
+    bot, state = make_bot(client, interview_stub, converter_stub, scripter_stub)
 
     run_flow(bot, client)
 
@@ -304,12 +318,14 @@ def test_two_chats_get_their_own_scripts_and_phases() -> None:
         questions=three_questions() * 2,
         profiles=[profile_json(PROFILE, ANIMAL), profile_json("A different profile", "badger")],
     )
+    converter_stub = StubConverterClient([converter_output_json(b"fake-hybrid-image")] * 2)
     scripter_stub = StubScripterClient(
         [scripter_output_json(SCRIPT), scripter_output_json(SCRIPT_TWO)]
     )
     bot, state = make_bot(
         client,
         interview_stub,
+        converter_stub,
         scripter_stub,
         verdicts=[verdict_json(True), verdict_json(True)],
     )
@@ -334,8 +350,9 @@ def test_an_untouched_chat_has_no_script_after_another_chat_completes() -> None:
     interview_stub = StubInterviewClient(
         questions=three_questions(), profiles=[profile_json(PROFILE, ANIMAL)]
     )
+    converter_stub = StubConverterClient([converter_output_json(b"fake-hybrid-image")])
     scripter_stub = StubScripterClient([scripter_output_json(SCRIPT)])
-    bot, state = make_bot(client, interview_stub, scripter_stub)
+    bot, state = make_bot(client, interview_stub, converter_stub, scripter_stub)
 
     run_flow(bot, client, chat_id=1, start_id=1, file_id="person")
 

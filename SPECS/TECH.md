@@ -71,6 +71,19 @@ The technical contract. Every agent and feature spec defers to this file.
      greeting stage.
   Neither `/start` nor `/restart` restarts the Python process.
 
+## API timeout pattern
+
+- **Default timeout:** `DEFAULT_GEMINI_TIMEOUT = 60.0` seconds (module constant in
+  each ADK client: `interview_client.py`, `converter_client.py`, `narrator_client.py`).
+- **Configurable per-client:** each client accepts a `timeout` parameter in
+  `__init__` (defaulting to the constant).
+- **Implementation:** the model call is wrapped in `asyncio.wait_for()` with the
+  configured timeout. On `asyncio.TimeoutError`, a stage-specific handled error
+  is raised (`InterviewerError`, `ConverterError`, `NarratorError`).
+- **Graceful degradation:** timeout errors are caught by the Bot, logged at ERROR
+  via `@log_call`, and a friendly in-character reply is sent while preserving
+  the session phase for retry.
+
 ## Testing
 
 - **Red/Green TDD.** Tests are written before the code they cover.

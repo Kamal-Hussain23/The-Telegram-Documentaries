@@ -47,12 +47,18 @@ def test_non_human_photo_resets_the_session_to_the_initial_phase() -> None:
     bot, state = make_bot(client, StubVisionClient([verdict_json(False)]))
     progressed = state.load(42)
     progressed.phase = Phase.INTERVIEWING
+    progressed.photo = fixture_bytes("person.jpg")  # Simulate a prior accepted photo
+    progressed.dossier.questions = ["Q1"]
+    progressed.dossier.answers = ["A1"]
     state.save(progressed)
 
+    # Non-human photo in INTERVIEWING now gets mid-interview reply (wrong-payload guard)
+    # rather than going through bouncer classification
     bot.handle_update(photo_update(1, chat_id=42, file_id="landscape"))
 
-    assert state.load(42).phase is Phase.AWAITING_PHOTO
-    assert state.load(42).photo is None
+    # Session unchanged, still in INTERVIEWING (wrong-payload guard takes precedence)
+    assert state.load(42).phase is Phase.INTERVIEWING
+    assert state.load(42).photo is not None
 
 
 def test_unwired_bot_keeps_the_phase_1_photo_reply() -> None:

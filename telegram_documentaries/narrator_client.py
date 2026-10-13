@@ -11,9 +11,16 @@ Telegram voice notes need OGG/Opus (or MP3), so the raw PCM is wrapped via
 ``narrator_audio.pcm_to_ogg`` before the typed ``NarratorResult`` crosses back
 into the core. If the model ever returns a pre-wrapped Telegram-compatible
 stream (``audio/ogg`` / ``audio/mpeg``), it is passed through untouched.
+
+Timeout configuration: ``DEFAULT_GEMINI_TIMEOUT = 60.0`` seconds. The
+``timeout`` parameter wraps the ``generate_content`` call in
+``asyncio.wait_for``; on timeout, ``NarratorError`` is raised.
 """
 
 from __future__ import annotations
+
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 from google import genai
 from google.genai import types
@@ -35,6 +42,9 @@ PCM_MIME_TYPE = "audio/L16;codec=pcm;rate=24000"
 _OGG_MIME_TYPES = frozenset({"audio/ogg", "application/ogg"})
 _MP3_MIME_TYPES = frozenset({"audio/mpeg", "audio/mp3", "audio/mpga"})
 
+#: Default timeout for Gemini API calls (seconds).
+DEFAULT_GEMINI_TIMEOUT = 60.0
+
 
 class GeminiTTSClient:
     """Runs one direct TTS synthesis against ``gemini-3.1-flash-tts-preview``."""
@@ -45,12 +55,16 @@ class GeminiTTSClient:
         *,
         model: str = NARRATOR_MODEL,
         voice: str = NARRATOR_VOICE,
+        timeout: float = DEFAULT_GEMINI_TIMEOUT,
     ) -> None:
         if not api_key:
             raise ValueError("GEMINI_API_KEY must not be empty")
         self._model = model
         self._voice = voice
+        self._timeout = timeout
         self._client = genai.Client(api_key=api_key)
+        # ThreadPoolExecutor for running sync generate_content in async context
+        self._executor = ThreadPoolExecutor(max_workers=1)
 
     def synthesize(self, text: str) -> NarratorResult:
         """Synthesise one narration script into a Telegram-compatible voice note.
@@ -61,7 +75,25 @@ class GeminiTTSClient:
         if not text or not text.strip():
             raise NarratorError("refusing to synthesise empty narration text")
 
-        response = self._client.models.generate_content(
+        # Run the sync generate_content in a thread pool with asyncio.wait_for
+        async def _run_with_timeout() -> types.GenerateContentResponse:
+            loop = asyncio.get_running_loop()
+            return await asyncio.wait_for(
+                loop.run_in_executor(self._executor, self._sync_generate_content, text),
+                timeout=self._timeout,
+            )
+
+        try:
+            response = asyncio.run(_run_with_timeout())
+        except TimeoutError as exc:
+            raise NarratorError("TTS timeout") from exc
+
+        audio, mime_type = _extract_audio(response)
+        return _wrap_audio(audio, mime_type)
+
+    def _sync_generate_content(self, text: str) -> types.GenerateContentResponse:
+        """Synchronous wrapper for generate_content (runs in thread pool)."""
+        return self._client.models.generate_content(
             model=self._model,
             contents=text,
             config=types.GenerateContentConfig(
@@ -73,8 +105,6 @@ class GeminiTTSClient:
                 ),
             ),
         )
-        audio, mime_type = _extract_audio(response)
-        return _wrap_audio(audio, mime_type)
 
 
 def _extract_audio(response: types.GenerateContentResponse) -> tuple[bytes, str | None]:
