@@ -31,8 +31,8 @@ from telegram_documentaries.state import Phase, StateDriver
 #: retries it. Never suggests a photo (that would reset the conversation).
 NARRATOR_FAILURE_TEXT = (
     "Alas — the narration spirits are being temperamental and the voice note "
-    "refuses to generate. The script is safe and waiting, so simply reply "
-    "with anything and we'll try again."
+    "refuses to generate (TTS timeout or error). The script is safe and waiting, "
+    "so simply reply with anything and we'll try again."
 )
 
 
